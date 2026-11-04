@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException
 
 from zhibiao.api import router
 from zhibiao.database import close_database, database_ready, open_database
+from zhibiao.generation.runner import fail_stale_jobs
 from zhibiao.seed import seed_all
 from zhibiao.settings import get_settings
 
@@ -27,6 +28,7 @@ async def lifespan(_: FastAPI):
     await open_database()
     if database_ready():
         await seed_all()
+        await fail_stale_jobs()
     yield
     await close_database()
 

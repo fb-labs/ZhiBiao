@@ -93,6 +93,75 @@ export type Delivery = {
   downloadUrl: string;
 };
 
+export type GenerationIssue = {
+  sectionId: string | null;
+  heading: string;
+  severity: string;
+  category: string;
+  message: string;
+};
+
+export type GenerationJob = {
+  id: string;
+  tenderId: string;
+  kind: string;
+  status: string;
+  progress: number;
+  message: string;
+  payload: Record<string, unknown>;
+  result: {
+    generated?: number;
+    failed?: number;
+    skipped?: number;
+    errors?: { sectionId: string; heading: string; error: string }[];
+    quality?: { sections: number; written: number; blockers: number; issues: number; characters: number };
+    issues?: GenerationIssue[];
+  };
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type QualityReport = {
+  applied: number;
+  stats: { sections: number; written: number; blockers: number; issues: number; characters: number };
+  issues: GenerationIssue[];
+};
+
+export type AgentSpec = {
+  key: string;
+  name: string;
+  description: string;
+  maxSteps: number;
+  tools: { name: string; description: string }[];
+};
+
+export type AgentTraceStep = {
+  step: number;
+  thought: string;
+  action: string;
+  args: Record<string, unknown>;
+  result?: unknown;
+};
+
+export type AgentRun = {
+  id: string;
+  tenderId: string;
+  kind: string;
+  status: string;
+  progress: number;
+  message: string;
+  payload: Record<string, unknown>;
+  result: {
+    output?: Record<string, unknown>;
+    trace?: AgentTraceStep[];
+    error?: string;
+    issues?: GenerationIssue[];
+    stats?: Record<string, number>;
+  };
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type Template = {
   id: string;
   name: string;
@@ -318,10 +387,50 @@ export const api = {
   analysis: (id: string) => request<Analysis>(`/tenders/${id}/analysis`),
   runAnalysis: (id: string) => request<Analysis>(`/tenders/${id}/analysis`, { method: 'POST' }),
 
-  outline: (id: string) => request<BidDocument & { revision: number; createdAt: string | null }>(`/tenders/${id}/outline`),
-  buildOutline: (id: string) =>
-    request<BidDocument & { revision: number; createdAt: string | null }>(`/tenders/${id}/outline`, { method: 'POST' }),
+  outline: (id: string) =>
+    request<BidDocument & { revision: number; mode?: string; note?: string; targetWords?: number; createdAt: string | null }>(
+      `/tenders/${id}/outline`,
+    ),
+  buildOutline: (id: string, options: { mode: string; targetWords: number }) =>
+    request<BidDocument & { revision: number; mode?: string; note?: string; targetWords?: number; createdAt: string | null }>(
+      `/tenders/${id}/outline`,
+      { method: 'POST', body: JSON.stringify(options) },
+    ),
   document: (id: string) => request<BidDocument>(`/tenders/${id}/document`),
+  addSection: (tenderId: string, payload: { heading: string; intent?: string; targetWords?: number }) =>
+    request<Section>(`/tenders/${tenderId}/sections`, { method: 'POST', body: JSON.stringify(payload) }),
+  deleteSection: (tenderId: string, sectionId: string) =>
+    request<{ ok: boolean }>(`/tenders/${tenderId}/sections/${sectionId}`, { method: 'DELETE' }),
+  moveSection: (tenderId: string, sectionId: string, direction: 'up' | 'down') =>
+    request<{ ok: boolean } | Section>(`/tenders/${tenderId}/sections/${sectionId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction }),
+    }),
+  startGeneration: (tenderId: string, payload: { mode: string; sectionIds?: string[] }) =>
+    request<GenerationJob>(`/tenders/${tenderId}/generation`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  generationState: (tenderId: string) =>
+    request<{ active: GenerationJob | null; items: GenerationJob[] }>(`/tenders/${tenderId}/generation`),
+  generation: (jobId: string) => request<GenerationJob>(`/generation/${jobId}`),
+  cancelGeneration: (jobId: string) =>
+    request<{ ok: boolean }>(`/generation/${jobId}/cancel`, { method: 'POST' }),
+  postprocess: (tenderId: string) =>
+    request<QualityReport>(`/tenders/${tenderId}/generation/postprocess`, { method: 'POST' }),
+
+  agents: () => request<{ items: AgentSpec[] }>('/agents'),
+  runAgent: (tenderId: string, key: string, payload: Record<string, unknown> = {}) =>
+    request<AgentRun>(`/tenders/${tenderId}/agents/${key}/run`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  agentRun: (jobId: string) => request<AgentRun>(`/agent-runs/${jobId}`),
+  agentRuns: (tenderId: string) =>
+    request<{ active: AgentRun | null; items: AgentRun[] }>(`/tenders/${tenderId}/agent-runs`),
+  agentFacts: (tenderId: string) => request<{ facts: Record<string, unknown> | null }>(`/tenders/${tenderId}/agents/facts`),
+  cancelAgentRun: (jobId: string) =>
+    request<{ ok: boolean }>(`/agent-runs/${jobId}/cancel`, { method: 'POST' }),
   patchSection: (tenderId: string, sectionId: string, payload: { heading?: string; intent?: string; body?: string }) =>
     request<Section>(`/tenders/${tenderId}/sections/${sectionId}`, {
       method: 'PATCH',

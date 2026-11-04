@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Backdrop } from '../components/Backdrop';
+import { PipelineScene } from '../components/PipelineScene';
+import { UserMenu } from '../components/UserMenu';
 import { api, type Account, type Overview, type Tender } from '../api';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -16,6 +17,8 @@ const STATUS_LABEL: Record<string, string> = {
 function statusLabel(status: string) {
   return STATUS_LABEL[status] || status;
 }
+
+const STATUS_FLOW = ['intake', 'analyzed', 'outlined', 'drafting', 'review', 'delivery', 'complete'];
 
 type Props = {
   account: Account;
@@ -102,12 +105,6 @@ export function HomePage({ account, onLogout }: Props) {
         </a>
         <nav className="topnav">
           <a className="active" href="/">工作台</a>
-          {(account.isSuperuser || account.permissions.includes('admin.ai')) && (
-            <a href="/settings/ai">模型服务</a>
-          )}
-          {account.permissions.includes('admin.accounts') && (
-            <a href="/settings/accounts">账号权限</a>
-          )}
         </nav>
         <div className="topbar-right">
           <label className="search">
@@ -117,32 +114,71 @@ export function HomePage({ account, onLogout }: Props) {
               placeholder="搜索项目名称、编号或采购人"
             />
           </label>
-          <span className="account-chip" title={account.displayName}>
-            {account.displayName.slice(0, 1)}
-          </span>
-          <button className="ghost-button" onClick={onLogout}>退出</button>
+          <UserMenu account={account} onLogout={onLogout} />
         </div>
       </header>
 
       <main className="workspace">
         <section className="hero">
-          <Backdrop />
           <div className="hero-copy">
-            <p className="eyebrow">投标工作台</p>
+            <p className="eyebrow"><i className="eyebrow-rule" />投标工作台 · BID WORKSPACE</p>
             <h1>
               {account.displayName}，今天从
               <br />
-              哪一份标书开始？
+              <span className="hero-mark">哪一份标书</span>开始？
             </h1>
             <p className="lead">
-              新增标书后，上传招标文件即可开始解读。所有项目按新增时间排列，最新的在最前。
+              从招标文件到可交付标书，一条工作线走完。上传文件即可解读资格条件、评分办法与风险项，
+              再逐章编写、检查并导出。
             </p>
+            <ol className="flow-rail">
+              <li><span>01</span><strong>招标解读</strong><small>资格 · 评分 · 风险</small></li>
+              <li><span>02</span><strong>大纲规划</strong><small>章节结构 · 字数</small></li>
+              <li><span>03</span><strong>正文编写</strong><small>逐章生成 · 编辑</small></li>
+              <li><span>04</span><strong>质量检查</strong><small>规则 + AI 审核</small></li>
+              <li><span>05</span><strong>文档交付</strong><small>DOCX · PDF</small></li>
+            </ol>
+            <div className="hero-foot">
+              <span><i />私有化部署 · 数据不出内网</span>
+              <span><i />全程留痕 · 每一处修改有依据</span>
+            </div>
           </div>
-          <div className="hero-stats">
-            <div><span>项目总数</span><strong>{overview?.total ?? 0}</strong></div>
-            <div><span>进行中</span><strong>{active}</strong></div>
-            <div><span>已完成</span><strong>{completed}</strong></div>
-            <div><span>资料文件</span><strong>{overview?.files ?? 0}</strong></div>
+          <div className="hero-side">
+            <div className="hero-visual">
+              <span className="visual-tag">BID PIPELINE · 投标流水线</span>
+              <PipelineScene />
+            </div>
+            <div className="scene-caption" aria-hidden="true">
+              <span>招标文件</span>
+              <i />
+              <span>解读评分</span>
+              <i />
+              <span>标书章节</span>
+              <i />
+              <span>交付文件</span>
+            </div>
+            <div className="hero-stats">
+              <div className="stat-card tone-indigo">
+                <span>项目总数</span>
+                <strong>{overview?.total ?? 0}</strong>
+                <small>全部投标项目</small>
+              </div>
+              <div className="stat-card tone-violet">
+                <span>进行中</span>
+                <strong>{active}</strong>
+                <small>正在推进的项目</small>
+              </div>
+              <div className="stat-card tone-teal">
+                <span>已完成</span>
+                <strong>{completed}</strong>
+                <small>已交付归档</small>
+              </div>
+              <div className="stat-card tone-cyan">
+                <span>资料文件</span>
+                <strong>{overview?.files ?? 0}</strong>
+                <small>招标与参考资料</small>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -168,9 +204,16 @@ export function HomePage({ account, onLogout }: Props) {
               {filtered.map((tender, index) => (
                 <a className="sheet" key={tender.id} href={`/tender/${tender.id}`}>
                   <div className="sheet-top">
-                    <span className="sheet-kicker">BID DOCUMENT</span>
+                    <span className="sheet-brandline">
+                      <i className="sheet-monogram">智</i>
+                      <span>
+                        <strong>智标</strong>
+                        <small>投标文件</small>
+                      </span>
+                    </span>
                     {index === 0 && query === '' && <span className="sheet-flag">最近增加</span>}
                   </div>
+                  <span className="sheet-watermark" aria-hidden="true">ZB</span>
                   <h3>{tender.title}</h3>
                   <span className={`status status-${tender.status}`}>{statusLabel(tender.status)}</span>
                   <div className="sheet-meta">
@@ -193,18 +236,7 @@ export function HomePage({ account, onLogout }: Props) {
               <h3>项目增长</h3>
               <span>近 6 个月</span>
             </div>
-            <div className="mini-chart">
-              {(overview?.monthly || []).map((item) => {
-                const max = Math.max(1, ...(overview?.monthly || []).map((point) => point.count));
-                return (
-                  <div className="mini-bar" key={item.month}>
-                    <div style={{ height: `${Math.max(6, (item.count / max) * 100)}%` }} />
-                    <small>{item.month.slice(5)}</small>
-                    <em>{item.count}</em>
-                  </div>
-                );
-              })}
-            </div>
+            <GrowthChart items={overview?.monthly || []} />
           </div>
           <div className="panel">
             <div className="panel-head">
@@ -212,15 +244,24 @@ export function HomePage({ account, onLogout }: Props) {
               <span>实时分布</span>
             </div>
             <div className="status-list">
-              {Object.entries(overview?.byStatus || {}).map(([status, count]) => (
-                <div key={status}>
-                  <span className={`dot dot-${status}`} />
-                  <span>{statusLabel(status)}</span>
-                  <strong>{count}</strong>
-                </div>
-              ))}
-              {Object.keys(overview?.byStatus || {}).length === 0 && <p className="notice">暂无项目</p>}
+              {STATUS_FLOW.map((status) => {
+                const count = overview?.byStatus?.[status] || 0;
+                const max = Math.max(1, ...STATUS_FLOW.map((key) => overview?.byStatus?.[key] || 0));
+                return (
+                  <div className={`status-row ${count === 0 ? 'is-zero' : ''}`} key={status}>
+                    <span className={`dot dot-${status}`} />
+                    <span className="status-name">{statusLabel(status)}</span>
+                    <span className="status-track">
+                      <i className={`status-fill fill-${status}`} style={{ width: `${Math.round((count / max) * 100)}%` }} />
+                    </span>
+                    <strong>{count}</strong>
+                  </div>
+                );
+              })}
             </div>
+            <p className="status-foot">
+              共 {overview?.total ?? 0} 个项目 · 按工作阶段统计
+            </p>
           </div>
         </section>
       </main>
@@ -263,6 +304,78 @@ export function HomePage({ account, onLogout }: Props) {
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+function GrowthChart({ items }: { items: { month: string; count: number }[] }) {
+  const width = 620;
+  const height = 210;
+  const pad = { left: 30, right: 22, top: 26, bottom: 34 };
+  const innerW = width - pad.left - pad.right;
+  const innerH = height - pad.top - pad.bottom;
+  const max = Math.max(1, ...items.map((item) => item.count));
+  const points = items.map((item, index) => ({
+    ...item,
+    x: pad.left + (items.length > 1 ? (index * innerW) / (items.length - 1) : innerW / 2),
+    y: pad.top + innerH - (item.count / max) * innerH,
+  }));
+  const line = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(' ');
+  const area = points.length
+    ? `M${points[0].x},${pad.top + innerH} L${points
+        .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+        .join(' L')} L${points[points.length - 1].x},${pad.top + innerH} Z`
+    : '';
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+
+  if (!items.length) {
+    return <p className="notice">暂无增长数据</p>;
+  }
+
+  return (
+    <div className="growth-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="近 6 个月项目增长">
+        <defs>
+          <linearGradient id="growth-area" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.26" />
+            <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.02" />
+          </linearGradient>
+          <linearGradient id="growth-line" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#8b5cf6" />
+            <stop offset="100%" stopColor="#22d3ee" />
+          </linearGradient>
+        </defs>
+        {[0, 1, 2, 3].map((index) => (
+          <line
+            key={index}
+            className="chart-grid"
+            x1={pad.left}
+            x2={width - pad.right}
+            y1={pad.top + (innerH * index) / 3}
+            y2={pad.top + (innerH * index) / 3}
+          />
+        ))}
+        {area && <path d={area} fill="url(#growth-area)" />}
+        {line && <path d={line} fill="none" stroke="url(#growth-line)" strokeWidth="2.4" strokeLinejoin="round" />}
+        {points.map((point) => (
+          <g key={point.month}>
+            <circle cx={point.x} cy={point.y} r={point.count > 0 ? 4.6 : 3.2} fill="#fff" stroke="#6366f1" strokeWidth="1.6" />
+            <text className="chart-value" x={point.x} y={point.y - 11} textAnchor="middle">
+              {point.count}
+            </text>
+            <text className="chart-month" x={point.x} y={height - 12} textAnchor="middle">
+              {point.month.slice(5)}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div className="growth-foot">
+        <span>近 6 个月新增</span>
+        <strong>{total}</strong>
+        <span>份标书</span>
+      </div>
     </div>
   );
 }

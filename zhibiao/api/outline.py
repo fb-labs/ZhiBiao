@@ -3,27 +3,34 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zhibiao.api.analysis import current_analysis, serialize as serialize_analysis
+from zhibiao.corpus import tender_corpus
 from zhibiao.database import get_db
 from zhibiao.domain import TenderStatus
-from zhibiao.llm import get_chat_client
-from zhibiao.models import (
-    Account,
-    AuditEvent,
-    BidDocument,
-    BidSection,
-    Outline,
-    Tender,
+from zhibiao.generation.outline import (
+    SectionPlan,
+    assign_targets,
+    build_outline as build_plan,
+    match_scores,
 )
+from zhibiao.llm import get_chat_client
+from zhibiao.models import Account, AuditEvent, BidDocument, BidSection, Outline, Tender
 from zhibiao.prompts import outline_messages
 from zhibiao.security import require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tenders", tags=["v2-outline"])
+
+
+class OutlineOptions(BaseModel):
+    mode: str = Field(default="score")
+    targetWords: int = Field(default=80000, ge=10000, le=300000)
+    templateId: str | None = None
 
 
 async def _document_of(db: AsyncSession, tender_id: str) -> BidDocument | None:
@@ -37,11 +44,15 @@ async def _document_of(db: AsyncSession, tender_id: str) -> BidDocument | None:
 
 
 def serialize_outline(outline: Outline | None, document: BidDocument | None, sections: list[BidSection]) -> dict:
+    meta = (outline.sections if outline and isinstance(outline.sections, dict) else {}) or {}
     return {
         "id": outline.id if outline else None,
         "tenderId": outline.tender_id if outline else (document.tender_id if document else ""),
         "revision": outline.revision if outline else 0,
         "documentId": document.id if document else None,
+        "mode": meta.get("mode"),
+        "note": meta.get("note"),
+        "targetWords": meta.get("targetWords"),
         "sections": [
             {
                 "id": row.id,
@@ -59,7 +70,7 @@ def serialize_outline(outline: Outline | None, document: BidDocument | None, sec
     }
 
 
-def _clean_sections(raw) -> list[dict]:
+def _clean_llm_sections(raw) -> list[dict]:
     items = raw if isinstance(raw, list) else []
     cleaned: list[dict] = []
     for entry in items[:12]:
@@ -68,10 +79,6 @@ def _clean_sections(raw) -> list[dict]:
         heading = str(entry.get("heading") or "").strip()
         if not heading:
             continue
-        try:
-            words = int(entry.get("targetWords") or 800)
-        except (TypeError, ValueError):
-            words = 800
         children = []
         for child in (entry.get("children") or [])[:8]:
             if not isinstance(child, dict):
@@ -79,53 +86,76 @@ def _clean_sections(raw) -> list[dict]:
             title = str(child.get("heading") or "").strip()
             if not title:
                 continue
-            try:
-                child_words = int(child.get("targetWords") or 600)
-            except (TypeError, ValueError):
-                child_words = 600
             children.append(
                 {
                     "heading": title[:255],
                     "intent": str(child.get("intent") or "").strip(),
-                    "targetWords": max(100, min(5000, child_words)),
                 }
             )
         cleaned.append(
             {
                 "heading": heading[:255],
                 "intent": str(entry.get("intent") or "").strip(),
-                "targetWords": max(100, min(5000, words)),
                 "children": children,
             }
         )
     return cleaned
 
 
+def _plans_from_llm(raw) -> list[SectionPlan]:
+    plans: list[SectionPlan] = []
+    for top in _clean_llm_sections(raw):
+        plans.append(
+            SectionPlan(heading=top["heading"], intent=top["intent"], level=1, weight=1.0)
+        )
+        for child in top["children"]:
+            plans.append(
+                SectionPlan(heading=child["heading"], intent=child["intent"], level=2, weight=1.0)
+            )
+    return plans
+
+
 @router.post("/{tender_id}/outline")
 async def build_outline(
     tender_id: str,
+    payload: OutlineOptions | None = None,
     account: Account = Depends(require_permission("document.write")),
     db: AsyncSession = Depends(get_db),
 ):
+    options = payload or OutlineOptions()
     tender = await db.get(Tender, tender_id)
     if not tender:
         raise HTTPException(status_code=404, detail="项目不存在")
     analysis = await current_analysis(db, tender_id)
-    if not analysis:
+    mode = options.mode if options.mode in {"score", "standard", "tender"} else "score"
+    if mode == "score" and not analysis:
         raise HTTPException(status_code=400, detail="请先完成招标解读")
 
-    client = await get_chat_client()
-    try:
-        payload = await client.json_chat(
-            outline_messages(tender.title, serialize_analysis(analysis)), max_tokens=5000
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("大纲生成失败: %s", exc)
-        raise HTTPException(status_code=502, detail=f"模型调用失败: {exc}") from exc
+    if mode in {"standard", "tender"}:
+        corpus = await tender_corpus(db, tender)
+        plans, note = build_plan(mode, corpus)
+        if options.templateId:
+            note += "（未使用指定模板，当前按内置结构生成）"
+    else:
+        client = await get_chat_client()
+        try:
+            result = await client.json_chat(
+                outline_messages(tender.title, serialize_analysis(analysis), options.targetWords),
+                max_tokens=6000,
+            )
+            plans = _plans_from_llm(result.get("sections"))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("大纲生成失败: %s", exc)
+            raise HTTPException(status_code=502, detail=f"模型调用失败: {exc}") from exc
+        if not plans:
+            raise HTTPException(status_code=502, detail="模型未返回有效章节结构")
+        note = "按评分项对齐生成，覆盖评分办法与实质性要求"
 
-    cleaned = _clean_sections(payload.get("sections"))
-    if not cleaned:
-        raise HTTPException(status_code=502, detail="模型未返回有效章节结构")
+    score_items = ((analysis.scoring or {}).get("items") or []) if analysis else []
+    match_scores(plans, score_items)
+    assign_targets(plans, options.targetWords)
+    if not plans:
+        raise HTTPException(status_code=502, detail="未能生成章节结构")
 
     document = await _document_of(db, tender_id)
     if not document:
@@ -136,31 +166,29 @@ async def build_outline(
         await db.execute(delete(BidSection).where(BidSection.document_id == document.id))
 
     position = 0
-    for index, top in enumerate(cleaned, start=1):
-        key = f"s{index}"
+    parent_key: str | None = None
+    section_meta: list[dict] = []
+    for index, plan in enumerate(plans, start=1):
+        if plan.level == 1:
+            parent_key = f"s{index}"
+        row_parent = None if plan.level == 1 else parent_key
         db.add(
             BidSection(
                 document_id=document.id,
                 position=position,
-                parent_key=None,
-                heading=top["heading"],
-                intent=top["intent"],
-                target_words=top["targetWords"],
+                parent_key=row_parent,
+                heading=plan.heading,
+                intent=plan.intent,
+                target_words=plan.target_words,
             )
         )
+        section_meta.append(
+            {
+                **plan.as_dict(),
+                "parentKey": row_parent,
+            }
+        )
         position += 1
-        for child_index, child in enumerate(top["children"], start=1):
-            db.add(
-                BidSection(
-                    document_id=document.id,
-                    position=position,
-                    parent_key=key,
-                    heading=child["heading"],
-                    intent=child["intent"],
-                    target_words=child["targetWords"],
-                )
-            )
-            position += 1
 
     await db.execute(
         update(Outline)
@@ -168,11 +196,21 @@ async def build_outline(
         .values(is_current=False)
     )
     latest = await db.scalar(
-        select(Outline.revision).where(Outline.tender_id == tender_id).order_by(
-            Outline.revision.desc()
-        )
+        select(Outline.revision)
+        .where(Outline.tender_id == tender_id)
+        .order_by(Outline.revision.desc())
     )
-    outline = Outline(tender_id=tender_id, revision=(latest or 0) + 1, sections=cleaned, is_current=True)
+    outline = Outline(
+        tender_id=tender_id,
+        revision=(latest or 0) + 1,
+        sections={
+            "mode": mode,
+            "note": note,
+            "targetWords": options.targetWords,
+            "plans": section_meta,
+        },
+        is_current=True,
+    )
     db.add(outline)
     if tender.status in {TenderStatus.INTAKE, TenderStatus.ANALYZED, TenderStatus.OUTLINED}:
         tender.status = TenderStatus.OUTLINED
@@ -182,7 +220,12 @@ async def build_outline(
             action="outline.build",
             target_type="tender",
             target_id=tender_id,
-            detail={"revision": outline.revision, "sections": position},
+            detail={
+                "revision": outline.revision,
+                "mode": mode,
+                "sections": position,
+                "targetWords": options.targetWords,
+            },
         )
     )
     await db.flush()

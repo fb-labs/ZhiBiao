@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -83,5 +84,75 @@ def test_login_and_workflow(client: TestClient):
     assert roles.status_code == 200
     assert {item["code"] for item in roles.json()["items"]} >= {"admin", "editor"}
 
+    agents = client.get("/api/agents")
+    assert agents.status_code == 200
+    assert {item["key"] for item in agents.json()["items"]} >= {
+        "tender_reader",
+        "planner",
+        "builder",
+        "auditor",
+        "fixer",
+        "template",
+    }
+
     deleted = client.delete(f"/api/tenders/{tender_id}")
     assert deleted.status_code == 200
+
+
+def test_outline_editing_and_batch_generation(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "sxit@123456"})
+    assert login.status_code == 200
+    created = client.post("/api/tenders", json={"title": "批量生成测试"})
+    tender_id = created.json()["id"]
+
+    outline = client.post(
+        f"/api/tenders/{tender_id}/outline",
+        json={"mode": "standard", "targetWords": 50000},
+    )
+    assert outline.status_code == 200
+    sections = outline.json()["sections"]
+    assert len(sections) >= 20
+    assert all(section["targetWords"] > 0 for section in sections)
+
+    added = client.post(
+        f"/api/tenders/{tender_id}/sections",
+        json={"heading": "补充承诺", "targetWords": 800},
+    )
+    assert added.status_code == 200
+    section_id = added.json()["id"]
+    moved = client.post(
+        f"/api/tenders/{tender_id}/sections/{section_id}/move",
+        json={"direction": "up"},
+    )
+    assert moved.status_code == 200
+    assert client.delete(f"/api/tenders/{tender_id}/sections/{section_id}").status_code == 200
+
+    async def fake_generate(_client, _tender, _analysis, section, _sections):
+        return f"## {section.heading}\n" + ("本节按招标要求给出可核查的实施安排与量化承诺。" * 12)
+
+    monkeypatch.setattr("zhibiao.generation.runner.generate_body", fake_generate)
+    started = client.post(f"/api/tenders/{tender_id}/generation", json={"mode": "missing"})
+    assert started.status_code == 200
+    job_id = started.json()["id"]
+
+    job = None
+    for _ in range(80):
+        time.sleep(0.15)
+        state = client.get(f"/api/generation/{job_id}")
+        if state.status_code == 200:
+            job = state.json()
+            if job["status"] not in {"queued", "running"}:
+                break
+    assert job is not None
+    assert job["status"] == "succeeded"
+    assert job["result"]["generated"] >= 20
+
+    document = client.get(f"/api/tenders/{tender_id}/document")
+    assert document.status_code == 200
+    assert all(section["body"].strip() for section in document.json()["sections"])
+
+    report = client.post(f"/api/tenders/{tender_id}/generation/postprocess")
+    assert report.status_code == 200
+    assert "stats" in report.json()
+
+    assert client.delete(f"/api/tenders/{tender_id}").status_code == 200

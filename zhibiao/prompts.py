@@ -54,24 +54,26 @@ OUTLINE_SCHEMA = """请严格按以下 JSON 结构输出：
     {
       "heading": "一级章节标题（如：投标函及商务响应）",
       "intent": "该章节要证明什么、对应哪条评分项",
-      "targetWords": 800,
+      "targetWords": 3200,
       "children": [
-        {"heading": "二级标题", "intent": "写作要点", "targetWords": 600, "children": []}
+        {"heading": "二级标题", "intent": "写作要点", "targetWords": 2400, "children": []}
       ]
     }
   ]
 }
-一级章节 6-10 个，最多两级；targetWords 为整数，合计约 8000-15000 字。"""
+一级章节 6-10 个，最多两级；必须覆盖全部评分项与实质性要求；
+targetWords 为整数，全书合计约 {total} 字。"""
 
 
-def outline_messages(title: str, analysis: dict) -> list[dict]:
+def outline_messages(title: str, analysis: dict, total_words: int = 80000) -> list[dict]:
     user = f"""项目名称：{title}
 项目总览：{analysis.get('overview', '')}
 关键维度：{analysis.get('dimensions', [])}
 评分办法：{analysis.get('scoring', {})}
 实质性要求：{analysis.get('requirements', [])}
+目标总篇幅：约 {total_words} 字
 
-{OUTLINE_SCHEMA}"""
+{OUTLINE_SCHEMA.format(total=total_words)}"""
     return [
         {"role": "system", "content": OUTLINE_SYSTEM},
         {"role": "user", "content": user},

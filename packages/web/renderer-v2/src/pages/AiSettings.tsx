@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { UserMenu } from '../components/UserMenu';
 import { api, type Account, type Assistant, type Provider } from '../api';
 
 type Props = {
@@ -137,11 +138,9 @@ export function AiSettingsPage({ account, onLogout }: Props) {
         </a>
         <nav className="topnav">
           <a href="/">工作台</a>
-          <a className="active" href="/settings/ai">模型服务</a>
         </nav>
         <div className="topbar-right">
-          <span className="account-chip">{account.displayName.slice(0, 1)}</span>
-          <button className="ghost-button" onClick={onLogout}>退出</button>
+          <UserMenu account={account} onLogout={onLogout} />
         </div>
       </header>
 

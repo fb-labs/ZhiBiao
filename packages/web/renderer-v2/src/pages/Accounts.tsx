@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { UserMenu } from '../components/UserMenu';
 import { api, type Account, type AdminAccount, type RoleInfo } from '../api';
 
 type Props = {
@@ -147,12 +148,9 @@ export function AccountsPage({ account, onLogout }: Props) {
         </a>
         <nav className="topnav">
           <a href="/">工作台</a>
-          <a className="active" href="/settings/accounts">账号权限</a>
-          {(account.isSuperuser || account.permissions.includes('admin.ai')) && <a href="/settings/ai">模型服务</a>}
         </nav>
         <div className="topbar-right">
-          <span className="account-chip">{account.displayName.slice(0, 1)}</span>
-          <button className="ghost-button" onClick={onLogout}>退出</button>
+          <UserMenu account={account} onLogout={onLogout} />
         </div>
       </header>
 

@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Backdrop } from '../components/Backdrop';
+import { PipelineScene } from '../components/PipelineScene';
+import { UserMenu } from '../components/UserMenu';
 import {
   api,
   type Account,
+  type AgentRun,
+  type AgentSpec,
   type Analysis,
   type BidDocument,
   type Delivery,
   type FixProposal,
+  type GenerationIssue,
+  type GenerationJob,
+  type QualityReport,
   type Review,
   type Section,
   type Tender,
@@ -32,6 +38,17 @@ const ROLE_LABEL: Record<string, string> = {
   attachment: '参考资料',
 };
 
+const FACT_LABEL: Record<string, string> = {
+  name: '项目名称',
+  code: '项目编号',
+  buyer: '采购人',
+  budget: '预算 / 限价',
+  deadline: '投标截止',
+  bidValidity: '投标有效期',
+  duration: '总工期',
+  deposit: '投标保证金',
+};
+
 const SEVERITY_LABEL: Record<string, string> = {
   blocker: '阻断',
   critical: '严重',
@@ -40,24 +57,7 @@ const SEVERITY_LABEL: Record<string, string> = {
   info: '提示',
 };
 
-const STEPS = [
-  { key: 'intake', label: '资料接收' },
-  { key: 'analyzed', label: '招标解读' },
-  { key: 'outlined', label: '大纲规划' },
-  { key: 'drafting', label: '标书编写' },
-  { key: 'review', label: '质量检查' },
-  { key: 'delivery', label: '文档交付' },
-  { key: 'complete', label: '完成' },
-];
-
-const STAGE_ORDER = ['intake', 'analyzed', 'outlined', 'drafting', 'review', 'delivery', 'complete'];
-
-function stageIndex(status: string) {
-  const index = STAGE_ORDER.indexOf(status);
-  return index < 0 ? 0 : index;
-}
-
-type Tab = 'overview' | 'files' | 'analysis' | 'writing' | 'review' | 'delivery';
+type Tab = 'overview' | 'files' | 'analysis' | 'writing' | 'review' | 'delivery' | 'agents';
 
 type Props = {
   account: Account;
@@ -81,8 +81,18 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const [preview, setPreview] = useState<TenderFile | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState('');
-  const [generatingAll, setGeneratingAll] = useState(false);
   const [saving, setSaving] = useState('');
+  const [outlineInfo, setOutlineInfo] = useState<{ mode?: string; note?: string; targetWords?: number } | null>(null);
+  const [outlineMode, setOutlineMode] = useState('score');
+  const [targetWords, setTargetWords] = useState(80000);
+  const [generationJob, setGenerationJob] = useState<GenerationJob | null>(null);
+  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
+  const [agentSpecs, setAgentSpecs] = useState<AgentSpec[]>([]);
+  const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
+  const [agentJob, setAgentJob] = useState<AgentRun | null>(null);
+  const [agentFacts, setAgentFacts] = useState<Record<string, unknown> | null>(null);
+  const [agentIssues, setAgentIssues] = useState<GenerationIssue[]>([]);
+  const [agentTraceOpen, setAgentTraceOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState('mixed');
   const [fixes, setFixes] = useState<Record<string, FixProposal>>({});
   const [fixing, setFixing] = useState('');
@@ -98,17 +108,47 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       setTender(detail);
       setFiles(fileList.items);
 
-      const [analysisResult, documentResult, reviewResult, deliveryResult] =
-        await Promise.allSettled([
-          api.analysis(id),
-          api.document(id),
-          detail.reviewId ? api.review(detail.reviewId) : Promise.reject(new Error('无检查记录')),
-          api.deliveries(id),
-        ]);
+      const [
+        analysisResult,
+        documentResult,
+        reviewResult,
+        deliveryResult,
+        outlineResult,
+        generationResult,
+        agentRunsResult,
+        agentFactsResult,
+      ] = await Promise.allSettled([
+        api.analysis(id),
+        api.document(id),
+        detail.reviewId ? api.review(detail.reviewId) : Promise.reject(new Error('无检查记录')),
+        api.deliveries(id),
+        api.outline(id),
+        api.generationState(id),
+        api.agentRuns(id),
+        api.agentFacts(id),
+      ]);
       setAnalysis(analysisResult.status === 'fulfilled' ? analysisResult.value : null);
       setDocument(documentResult.status === 'fulfilled' ? documentResult.value : null);
       setReview(reviewResult.status === 'fulfilled' ? reviewResult.value : null);
       setDeliveries(deliveryResult.status === 'fulfilled' ? deliveryResult.value.items : []);
+      if (outlineResult.status === 'fulfilled') {
+        const info = outlineResult.value;
+        setOutlineInfo({ mode: info.mode, note: info.note, targetWords: info.targetWords });
+        if (info.mode) setOutlineMode(info.mode);
+        if (info.targetWords) setTargetWords(info.targetWords);
+      }
+      if (generationResult.status === 'fulfilled') {
+        const state = generationResult.value;
+        setGenerationJob(state.active || state.items[0] || null);
+      }
+      if (agentRunsResult.status === 'fulfilled') {
+        const state = agentRunsResult.value;
+        setAgentRuns(state.items);
+        setAgentJob(state.active || state.items[0] || null);
+      }
+      if (agentFactsResult.status === 'fulfilled') {
+        setAgentFacts(agentFactsResult.value.facts);
+      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '加载失败');
     }
@@ -116,6 +156,10 @@ export function TenderDetailPage({ account, onLogout }: Props) {
 
   useEffect(() => {
     load();
+    api
+      .agents()
+      .then((result) => setAgentSpecs(result.items))
+      .catch(() => setAgentSpecs([]));
   }, [id]);
 
   useEffect(() => {
@@ -128,6 +172,52 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     setDrafts(next);
     setFixes({});
   }, [document]);
+
+  useEffect(() => {
+    if (!agentJob || !['queued', 'running'].includes(agentJob.status)) return;
+    let disposed = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api.agentRun(agentJob.id);
+        if (disposed) return;
+        setAgentJob(next);
+        const issues = agentIssuesOf(next);
+        if (issues.length) setAgentIssues(issues);
+        if (!['queued', 'running'].includes(next.status)) {
+          window.clearInterval(timer);
+          await load();
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 1500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [agentJob?.id, agentJob?.status]);
+
+  useEffect(() => {
+    if (!generationJob || !['queued', 'running'].includes(generationJob.status)) return;
+    let disposed = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api.generation(generationJob.id);
+        if (disposed) return;
+        setGenerationJob(next);
+        if (!['queued', 'running'].includes(next.status)) {
+          window.clearInterval(timer);
+          await load();
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 1500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [generationJob?.id, generationJob?.status]);
 
   const upload = async (picked: File | null) => {
     if (!picked) return;
@@ -194,7 +284,9 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     setBusy('outline');
     setError('');
     try {
-      await api.buildOutline(id);
+      const result = await api.buildOutline(id, { mode: outlineMode, targetWords });
+      setOutlineInfo({ mode: result.mode, note: result.note, targetWords: result.targetWords });
+      setQualityReport(null);
       await load();
       setTab('writing');
     } catch (exc) {
@@ -235,18 +327,115 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     }
   };
 
-  const generateAll = async () => {
-    if (!document || generatingAll) return;
-    setGeneratingAll(true);
+  const startGeneration = async (mode: 'missing' | 'retry' | 'all') => {
+    if (!document || busy || generationJob?.status === 'running') return;
+    if (mode === 'all' && !window.confirm('全部重跑会覆盖所有已生成章节，确定继续？')) return;
+    setBusy('generation');
     setError('');
-    for (const row of document.sections) {
-      const written = (drafts[row.id] ?? row.body ?? '').trim();
-      if (written) continue;
-      const ok = await generateSection(row);
-      if (!ok) break;
+    setQualityReport(null);
+    try {
+      const job = await api.startGeneration(id, { mode });
+      setGenerationJob(job);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '启动生成失败');
+    } finally {
+      setBusy('');
     }
-    setGeneratingAll(false);
-    await load();
+  };
+
+  const cancelGeneration = async () => {
+    if (!generationJob) return;
+    try {
+      await api.cancelGeneration(generationJob.id);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '取消失败');
+    }
+  };
+
+  const agentBusy = ['queued', 'running'].includes(agentJob?.status || '');
+
+  const runAgent = async (spec: AgentSpec) => {
+    if (agentBusy) return;
+    if (spec.key === 'builder' && !window.confirm('正文编制 Agent 会生成所有未完成章节，可能耗时较长，确定继续？')) {
+      return;
+    }
+    if (spec.key === 'fixer' && !agentIssues.length) {
+      setError('请先运行「核对 Agent」，再执行修复');
+      return;
+    }
+    let payload: Record<string, unknown> = {};
+    if (spec.key === 'planner') payload = { targetWords };
+    if (spec.key === 'builder') payload = { mode: 'missing' };
+    if (spec.key === 'fixer') payload = { issues: agentIssues.slice(0, 3) };
+    setError('');
+    if (spec.key === 'auditor') setAgentIssues([]);
+    try {
+      const job = await api.runAgent(id, spec.key, payload);
+      setAgentJob(job);
+      setAgentTraceOpen(true);
+      setTab('agents');
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '启动 Agent 失败');
+    }
+  };
+
+  const cancelAgent = async () => {
+    if (!agentJob) return;
+    try {
+      await api.cancelAgentRun(agentJob.id);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '取消 Agent 失败');
+    }
+  };
+
+  const runPostprocess = async () => {
+    if (!document) return;
+    setBusy('postprocess');
+    setError('');
+    try {
+      const report = await api.postprocess(id);
+      setQualityReport(report);
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '全文校验失败');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const addSection = async () => {
+    const heading = window.prompt('新增章节标题');
+    if (!heading?.trim()) return;
+    const wordsInput = window.prompt('目标字数', '800');
+    const words = Number(wordsInput || 800);
+    try {
+      await api.addSection(id, {
+        heading: heading.trim(),
+        targetWords: Number.isFinite(words) ? Math.max(100, Math.min(8000, words)) : 800,
+      });
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '新增章节失败');
+    }
+  };
+
+  const removeSection = async (row: Section) => {
+    if (!window.confirm(`删除章节「${row.heading}」？`)) return;
+    try {
+      await api.deleteSection(id, row.id);
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '删除章节失败');
+    }
+  };
+
+  const moveSection = async (row: Section, direction: 'up' | 'down') => {
+    try {
+      await api.moveSection(id, row.id, direction);
+      await load();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '移动章节失败');
+    }
   };
 
   const saveSection = async (row: Section) => {
@@ -347,7 +536,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     }
   };
 
-  const current = tender ? stageIndex(tender.status) : 0;
   const writtenCount = useMemo(
     () => (document ? document.sections.filter((row) => (drafts[row.id] ?? row.body).trim()).length : 0),
     [document, drafts],
@@ -356,6 +544,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const canReview = account.permissions.includes('review.run');
   const canDeliver = account.permissions.includes('delivery.run');
   const canAnalyze = account.permissions.includes('analysis.run');
+  const batchRunning = ['queued', 'running'].includes(generationJob?.status || '');
 
   return (
     <div className="shell">
@@ -367,18 +556,15 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         <nav className="topnav">
           <a href="/">工作台</a>
           <a className="active" href={`/tender/${id}`}>投标项目</a>
-          {(account.isSuperuser || account.permissions.includes('admin.ai')) && <a href="/settings/ai">模型服务</a>}
-          {account.permissions.includes('admin.accounts') && <a href="/settings/accounts">账号权限</a>}
         </nav>
         <div className="topbar-right">
-          <span className="account-chip">{account.displayName.slice(0, 1)}</span>
-          <button className="ghost-button" onClick={onLogout}>退出</button>
+          <UserMenu account={account} onLogout={onLogout} />
         </div>
       </header>
 
       <main className="workspace">
         <section className="tender-hero">
-          <Backdrop dense />
+          <PipelineScene dense />
           <div className="hero-copy">
             <p className="eyebrow">{tender?.code || 'TENDER'}</p>
             <h1>{tender?.title || '正在加载…'}</h1>
@@ -396,34 +582,29 @@ export function TenderDetailPage({ account, onLogout }: Props) {
           </div>
         </section>
 
-        <nav className="steps">
-          {STEPS.map((step, index) => (
-            <div key={step.key} className={`step ${index <= current ? 'done' : ''} ${index === current ? 'current' : ''}`}>
-              <span>{String(index + 1).padStart(2, '0')}</span>
-              <strong>{step.label}</strong>
-            </div>
-          ))}
-        </nav>
-
         {error && <p className="notice error">{error}</p>}
 
         <section className="tabs">
           <div className="tab-bar">
-            <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>概览</button>
-            <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>
+            <button className={`util ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>概览</button>
+            <button className={`util ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>
               资料文件 <span>{files.length}</span>
             </button>
+            <button className={`util ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>
+              Agents
+            </button>
+            <i className="tab-sep" />
             <button className={tab === 'analysis' ? 'active' : ''} onClick={() => setTab('analysis')}>
-              招标解读 <span>{analysis ? '已完成' : '待开始'}</span>
+              <span className="tab-step">01</span>招标解读<small>{analysis ? '已完成' : '待开始'}</small>
             </button>
             <button className={tab === 'writing' ? 'active' : ''} onClick={() => setTab('writing')}>
-              标书编写 <span>{document ? `${writtenCount}/${document.sections.length}` : '待开始'}</span>
+              <span className="tab-step">02</span>大纲与编写<small>{document ? `${writtenCount}/${document.sections.length}` : '待开始'}</small>
             </button>
             <button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>
-              质量检查 <span>{review ? `${review.score} 分` : '待开始'}</span>
+              <span className="tab-step">03</span>质量检查<small>{review ? `${review.score} 分` : '待开始'}</small>
             </button>
             <button className={tab === 'delivery' ? 'active' : ''} onClick={() => setTab('delivery')}>
-              文档交付 <span>{deliveries.length}</span>
+              <span className="tab-step">04</span>文档交付<small>{deliveries.length} 个</small>
             </button>
           </div>
 
@@ -644,16 +825,104 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                     <div>
                       <p className="eyebrow">{document.title}</p>
                       <h2>标书编写 <small>{writtenCount}/{document.sections.length} 节已完成</small></h2>
+                      {outlineInfo?.note && (
+                        <p className="panel-lead">
+                          {outlineInfo.note} · 目标篇幅约 {Math.round(targetWords / 10000)} 万字
+                        </p>
+                      )}
                     </div>
-                    <div className="panel-actions">
+                  </div>
+
+                  <div className="generation-bar">
+                    <div className="gen-settings">
+                      <label>
+                        结构模式
+                        <select value={outlineMode} onChange={(event) => setOutlineMode(event.target.value)} disabled={!!busy}>
+                          <option value="score">按评分项对齐</option>
+                          <option value="standard">标准投标结构</option>
+                          <option value="tender">按招标文件格式</option>
+                        </select>
+                      </label>
+                      <label>
+                        目标篇幅
+                        <select value={targetWords} onChange={(event) => setTargetWords(Number(event.target.value))} disabled={!!busy}>
+                          <option value={50000}>5 万字</option>
+                          <option value={80000}>8 万字</option>
+                          <option value={100000}>10 万字</option>
+                          <option value={150000}>15 万字</option>
+                          <option value={200000}>20 万字</option>
+                        </select>
+                      </label>
                       <button className="ghost-button" onClick={buildOutline} disabled={!!busy || !canWrite}>
-                        {busy === 'outline' ? '重建中…' : '重建大纲'}
+                        {busy === 'outline' ? '生成中…' : '重建大纲'}
                       </button>
-                      <button className="primary-button" onClick={generateAll} disabled={generatingAll || !canWrite}>
-                        {generatingAll ? '正在逐章生成…' : '生成全部未完成章节'}
+                    </div>
+                    <div className="gen-actions">
+                      <button
+                        className="primary-button"
+                        onClick={() => startGeneration('missing')}
+                        disabled={!!busy || !canWrite || ['queued', 'running'].includes(generationJob?.status || '')}
+                      >
+                        {busy === 'generation' ? '启动中…' : '生成未完成章节'}
+                      </button>
+                      <button className="ghost-button" onClick={() => startGeneration('retry')} disabled={!!busy || !canWrite}>
+                        重跑失败章节
+                      </button>
+                      <button className="ghost-button" onClick={() => startGeneration('all')} disabled={!!busy || !canWrite}>
+                        全部重跑
+                      </button>
+                      <button className="ghost-button" onClick={runPostprocess} disabled={!!busy || !canWrite}>
+                        {busy === 'postprocess' ? '校验中…' : '全文校验'}
                       </button>
                     </div>
                   </div>
+
+                  {generationJob && (
+                    <div className={`generation-progress ${generationJob.status}`}>
+                      <div className="gen-progress-head">
+                        <strong>{generationJob.message}</strong>
+                        <span>{generationJob.progress}%</span>
+                      </div>
+                      <div className="gen-track">
+                        <i style={{ width: `${Math.max(2, generationJob.progress)}%` }} />
+                      </div>
+                      <div className="gen-progress-foot">
+                        <span>
+                          成功 {generationJob.result?.generated ?? 0} · 失败 {generationJob.result?.failed ?? 0}
+                          {generationJob.result?.quality ? ` · ${generationJob.result.quality.characters} 字` : ''}
+                        </span>
+                        {['queued', 'running'].includes(generationJob.status) && (
+                          <button className="ghost-button danger small" onClick={cancelGeneration}>
+                            取消生成
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {(() => {
+                    const issues: GenerationIssue[] = qualityReport?.issues || generationJob?.result?.issues || [];
+                    if (!issues.length) return null;
+                    return (
+                      <div className="quality-panel">
+                        <div className="quality-head">
+                          <strong>生成后检查</strong>
+                          <span>{issues.length} 项</span>
+                        </div>
+                        <ul className="quality-list">
+                          {issues.slice(0, 12).map((issue, index) => (
+                            <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
+                              <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
+                              <div>
+                                <strong>{issue.heading || '全文'}</strong>
+                                <p>{issue.message}</p>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
 
                   <div className="section-list">
                     {document.sections.map((row) => {
@@ -669,9 +938,29 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                             </div>
                             <div className="section-actions">
                               <button
+                                className="ghost-button small order"
+                                onClick={() => moveSection(row, 'up')}
+                                disabled={!canWrite || batchRunning || row.position === 0}
+                                title="上移"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                className="ghost-button small order"
+                                onClick={() => moveSection(row, 'down')}
+                                disabled={
+                                  !canWrite ||
+                                  batchRunning ||
+                                  row.position === document.sections.length - 1
+                                }
+                                title="下移"
+                              >
+                                ↓
+                              </button>
+                              <button
                                 className="ghost-button"
                                 onClick={() => generateSection(row)}
-                                disabled={!!generating || !canWrite}
+                                disabled={!!generating || !canWrite || batchRunning}
                               >
                                 {active ? '生成中…' : (drafts[row.id] || row.body).trim() ? '重新生成' : 'AI 编写'}
                               </button>
@@ -681,6 +970,13 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                                 disabled={saving === row.id || !canWrite}
                               >
                                 {saving === row.id ? '保存中…' : '保存'}
+                              </button>
+                              <button
+                                className="ghost-button danger small"
+                                onClick={() => removeSection(row)}
+                                disabled={!canWrite || batchRunning}
+                              >
+                                删除
                               </button>
                             </div>
                           </header>
@@ -696,6 +992,11 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                         </article>
                       );
                     })}
+                  </div>
+                  <div className="section-add-row">
+                    <button className="ghost-button" onClick={addSection} disabled={!canWrite || batchRunning}>
+                      + 新增章节
+                    </button>
                   </div>
                 </>
               )}
@@ -854,6 +1155,120 @@ export function TenderDetailPage({ account, onLogout }: Props) {
               )}
             </div>
           )}
+
+          {tab === 'agents' && (
+            <div className="agents-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">AGENT STUDIO</p>
+                  <h2>Agent 中心</h2>
+                  <p className="panel-lead">
+                    六个 Agent 分工协作：先抽取招标事实，再规划与编制，最后按原文核对并修复。
+                  </p>
+                </div>
+              </div>
+
+              {agentJob && (
+                <div className={`agent-run ${agentJob.status}`}>
+                  <div className="agent-run-head">
+                    <strong>{agentJob.message}</strong>
+                    <span>{agentJob.progress}%</span>
+                  </div>
+                  <div className="gen-track">
+                    <i style={{ width: `${Math.max(2, agentJob.progress)}%` }} />
+                  </div>
+                  <div className="agent-run-foot">
+                    <span>{agentJob.result?.error || agentJob.status}</span>
+                    <div className="agent-run-actions">
+                      {(agentJob.result?.trace?.length ?? 0) > 0 && (
+                        <button className="ghost-button small" onClick={() => setAgentTraceOpen((value) => !value)}>
+                          {agentTraceOpen ? '收起轨迹' : `查看轨迹 (${agentJob.result?.trace?.length})`}
+                        </button>
+                      )}
+                      {['queued', 'running'].includes(agentJob.status) && (
+                        <button className="ghost-button danger small" onClick={cancelAgent}>
+                          取消
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {agentTraceOpen && (agentJob.result?.trace?.length ?? 0) > 0 && (
+                    <ol className="agent-trace">
+                      {agentJob.result?.trace?.map((step) => (
+                        <li key={step.step}>
+                          <span>{String(step.step).padStart(2, '0')}</span>
+                          <div>
+                            <strong>{step.action}</strong>
+                            <p>{step.thought || '—'}</p>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              )}
+
+              <div className="agent-grid">
+                {agentSpecs.map((spec, index) => (
+                  <article className={`agent-card ${agentJob?.payload?.agent === spec.key ? 'active' : ''}`} key={spec.key}>
+                    <span className="agent-index">{String(index + 1).padStart(2, '0')}</span>
+                    <h3>{spec.name}</h3>
+                    <p>{spec.description}</p>
+                    <small>{spec.tools.length} 个工具 · 最多 {spec.maxSteps} 步</small>
+                    <button className="primary-button small" onClick={() => runAgent(spec)} disabled={agentBusy || !canWrite}>
+                      {agentBusy ? '运行中…' : '运行 Agent'}
+                    </button>
+                  </article>
+                ))}
+              </div>
+
+              {(agentFacts as { project?: Record<string, string> } | null)?.project && (
+                <div className="agent-facts">
+                  <div className="quality-head">
+                    <strong>招标事实台账</strong>
+                    <span>由招标解析 Agent 抽取</span>
+                  </div>
+                  <dl className="facts-grid">
+                    {Object.entries((agentFacts as { project: Record<string, string> }).project)
+                      .filter(([, value]) => value)
+                      .map(([key, value]) => (
+                        <div key={key}>
+                          <dt>{FACT_LABEL[key] || key}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                  <div className="facts-chips">
+                    <span>材料 {((agentFacts as { materials?: unknown[] }).materials || []).length}</span>
+                    <span>参数 {((agentFacts as { parameters?: unknown[] }).parameters || []).length}</span>
+                    <span>资格 {((agentFacts as { qualifications?: unknown[] }).qualifications || []).length}</span>
+                    <span>承诺 {((agentFacts as { commitments?: unknown[] }).commitments || []).length}</span>
+                    <span>模板章节 {(((agentFacts as { template?: { chapters?: unknown[] } }).template || {}).chapters || []).length}</span>
+                  </div>
+                </div>
+              )}
+
+              {agentIssues.length > 0 && (
+                <div className="quality-panel">
+                  <div className="quality-head">
+                    <strong>核对结果</strong>
+                    <span>{agentIssues.length} 项</span>
+                  </div>
+                  <ul className="quality-list">
+                    {agentIssues.slice(0, 12).map((issue, index) => (
+                      <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
+                        <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
+                        <div>
+                          <strong>{issue.heading || '全文'}</strong>
+                          <p>{issue.message}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       </main>
 
@@ -870,4 +1285,10 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       )}
     </div>
   );
+}
+
+function agentIssuesOf(run: AgentRun | null): GenerationIssue[] {
+  const output = run?.result?.output as { issues?: GenerationIssue[] } | undefined;
+  const issues = output?.issues || run?.result?.issues || [];
+  return Array.isArray(issues) ? issues : [];
 }

@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zhibiao.api.analysis import current_analysis, serialize as serialize_analysis
+from zhibiao.api.analysis import current_analysis
 from zhibiao.database import get_db, session_factory
 from zhibiao.domain import TenderStatus
+from zhibiao.generation.writer import finalize, stream_body
 from zhibiao.llm import get_chat_client
 from zhibiao.models import Account, BidDocument, BidSection, Tender
-from zhibiao.prompts import write_messages
 from zhibiao.security import require_permission
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,18 @@ class SectionPatch(BaseModel):
     heading: str | None = Field(default=None, min_length=1, max_length=255)
     intent: str | None = None
     body: str | None = None
+    targetWords: int | None = Field(default=None, ge=100, le=8000)
+
+
+class SectionCreate(BaseModel):
+    heading: str = Field(min_length=1, max_length=255)
+    intent: str = ""
+    targetWords: int = Field(default=800, ge=100, le=8000)
+    parentKey: str | None = None
+
+
+class SectionMove(BaseModel):
+    direction: str = Field(default="up")
 
 
 def serialize_section(row: BidSection) -> dict:
@@ -101,16 +113,83 @@ async def patch_section(
     if "body" in updates and updates["body"] is not None:
         row.body = updates["body"]
         row.status = "written" if row.body.strip() else "pending"
+    if "targetWords" in updates and updates["targetWords"] is not None:
+        row.target_words = int(updates["targetWords"])
     await db.flush()
     return serialize_section(row)
 
 
-def _neighbour_context(sections: list[BidSection], current: BidSection, limit: int = 3) -> str:
-    written = [row for row in sections if row.position < current.position and (row.body or "").strip()]
-    blocks = []
-    for row in written[-limit:]:
-        blocks.append(f"{row.heading}：{(row.body or '').strip()[:1200]}")
-    return "\n".join(blocks)
+@router.post("/{tender_id}/sections")
+async def create_section(
+    tender_id: str,
+    payload: SectionCreate,
+    _: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await document_of(db, tender_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="尚未生成标书大纲")
+    max_position = await db.scalar(
+        select(BidSection.position)
+        .where(BidSection.document_id == document.id)
+        .order_by(BidSection.position.desc())
+    )
+    row = BidSection(
+        document_id=document.id,
+        position=(max_position or 0) + 1,
+        parent_key=payload.parentKey,
+        heading=payload.heading.strip(),
+        intent=payload.intent.strip(),
+        target_words=payload.targetWords,
+    )
+    db.add(row)
+    await db.flush()
+    return serialize_section(row)
+
+
+@router.delete("/{tender_id}/sections/{section_id}")
+async def delete_section(
+    tender_id: str,
+    section_id: str,
+    _: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await document_of(db, tender_id)
+    row = await db.get(BidSection, section_id)
+    if not document or not row or row.document_id != document.id:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    await db.delete(row)
+    return {"ok": True}
+
+
+@router.post("/{tender_id}/sections/{section_id}/move")
+async def move_section(
+    tender_id: str,
+    section_id: str,
+    payload: SectionMove,
+    _: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await document_of(db, tender_id)
+    row = await db.get(BidSection, section_id)
+    if not document or not row or row.document_id != document.id:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    direction = "up" if payload.direction == "up" else "down"
+    comparator = BidSection.position < row.position if direction == "up" else BidSection.position > row.position
+    order = BidSection.position.desc() if direction == "up" else BidSection.position.asc()
+    neighbour = (
+        await db.execute(
+            select(BidSection)
+            .where(BidSection.document_id == document.id, comparator)
+            .order_by(order)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not neighbour:
+        return serialize_section(row)
+    row.position, neighbour.position = neighbour.position, row.position
+    await db.flush()
+    return {"ok": True}
 
 
 @router.post("/{tender_id}/sections/{section_id}/generate")
@@ -134,29 +213,12 @@ async def generate_section(
             .order_by(BidSection.position.asc())
         )
     ).scalars().all()
-    brief = serialize_analysis(analysis) if analysis else None
-    analysis_brief = "（尚未执行招标解读）"
-    if brief:
-        analysis_brief = brief["overview"]
-        if brief["requirements"]:
-            analysis_brief += "\n实质性要求：" + "；".join(brief["requirements"][:12])
-
-    messages = write_messages(
-        tender.title,
-        section.heading,
-        section.intent,
-        section.target_words,
-        _neighbour_context(list(sections), section),
-        analysis_brief,
-    )
 
     async def event_stream() -> AsyncIterator[str]:
         chunks: list[str] = []
         try:
             client = await get_chat_client()
-            async for delta in client.stream(
-                messages, max_tokens=max(1200, min(6000, section.target_words * 2))
-            ):
+            async for delta in stream_body(client, tender, analysis, section, list(sections)):
                 chunks.append(delta)
                 yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
         except Exception as exc:  # noqa: BLE001
@@ -164,7 +226,7 @@ async def generate_section(
             yield f"data: {json.dumps({'error': f'模型调用失败: {exc}'}, ensure_ascii=False)}\n\n"
             return
 
-        body = "".join(chunks).strip()
+        body = finalize("".join(chunks), section.heading, section.target_words)
         if not body:
             yield f"data: {json.dumps({'error': '模型未返回内容'}, ensure_ascii=False)}\n\n"
             return
