@@ -1,0 +1,81 @@
+# ===== 环境与密钥 =====
+.env
+.env.local
+.env.*.local
+# 方式一的 compose 插值文件（里面有 LLM_API_KEY 等真实密钥，绝不能入库）
+docker/.env
+docker/.env.docker
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== 运行时数据 =====
+var/
+uploads/
+projects/
+# 本地 SQLite 快速体验数据库
+*.db
+*.sqlite3
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== Node.js =====
+packages/web/node_modules/
+
+# ===== 前端构建产物（由 npm run build 生成，FastAPI 直接托管） =====
+/web_dist/
+
+# ===== 临时测试文件 =====
+test_llm_gateway.py
+test_outline_gen.py
+
+# ===== 工具目录 =====
+/.codeartsdoer/
+
+# ===== 本地 PostgreSQL 免安装运行时（脚本下载/解压/数据目录） =====
+/.pgsql/
+
+# ===== 开源发布：私有内容与构建产物（不进入公开仓库） =====
+迁移部署/
+输出文档/
+新建文件夹/
+服务器运维说明.md
+zb2-frontend-ui-audit.md
+五小竞赛成果简介*
+2026年阳泉市*
+*.tgz
+*.tar.gz
+*.bak-*
+*.bak-sessionfix
+.tmp/
+dist.prev/
+checkpoints/
+
+验证环境/

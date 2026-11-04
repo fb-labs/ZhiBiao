@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from zhibiao.api.analysis import current_analysis, serialize as serialize_analysis
+from zhibiao.database import get_db
+from zhibiao.domain import TenderStatus
+from zhibiao.llm import get_chat_client
+from zhibiao.models import (
+    Account,
+    AuditEvent,
+    BidDocument,
+    BidSection,
+    Outline,
+    Tender,
+)
+from zhibiao.prompts import outline_messages
+from zhibiao.security import require_permission
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/tenders", tags=["v2-outline"])
+
+
+async def _document_of(db: AsyncSession, tender_id: str) -> BidDocument | None:
+    return (
+        await db.execute(
+            select(BidDocument)
+            .where(BidDocument.tender_id == tender_id)
+            .order_by(BidDocument.created_at.desc())
+        )
+    ).scalar_one_or_none()
+
+
+def serialize_outline(outline: Outline | None, document: BidDocument | None, sections: list[BidSection]) -> dict:
+    return {
+        "id": outline.id if outline else None,
+        "tenderId": outline.tender_id if outline else (document.tender_id if document else ""),
+        "revision": outline.revision if outline else 0,
+        "documentId": document.id if document else None,
+        "sections": [
+            {
+                "id": row.id,
+                "position": row.position,
+                "parentKey": row.parent_key,
+                "heading": row.heading,
+                "intent": row.intent,
+                "targetWords": row.target_words,
+                "body": row.body,
+                "status": row.status,
+            }
+            for row in sections
+        ],
+        "createdAt": outline.created_at.isoformat() if outline and outline.created_at else None,
+    }
+
+
+def _clean_sections(raw) -> list[dict]:
+    items = raw if isinstance(raw, list) else []
+    cleaned: list[dict] = []
+    for entry in items[:12]:
+        if not isinstance(entry, dict):
+            continue
+        heading = str(entry.get("heading") or "").strip()
+        if not heading:
+            continue
+        try:
+            words = int(entry.get("targetWords") or 800)
+        except (TypeError, ValueError):
+            words = 800
+        children = []
+        for child in (entry.get("children") or [])[:8]:
+            if not isinstance(child, dict):
+                continue
+            title = str(child.get("heading") or "").strip()
+            if not title:
+                continue
+            try:
+                child_words = int(child.get("targetWords") or 600)
+            except (TypeError, ValueError):
+                child_words = 600
+            children.append(
+                {
+                    "heading": title[:255],
+                    "intent": str(child.get("intent") or "").strip(),
+                    "targetWords": max(100, min(5000, child_words)),
+                }
+            )
+        cleaned.append(
+            {
+                "heading": heading[:255],
+                "intent": str(entry.get("intent") or "").strip(),
+                "targetWords": max(100, min(5000, words)),
+                "children": children,
+            }
+        )
+    return cleaned
+
+
+@router.post("/{tender_id}/outline")
+async def build_outline(
+    tender_id: str,
+    account: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await db.get(Tender, tender_id)
+    if not tender:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    analysis = await current_analysis(db, tender_id)
+    if not analysis:
+        raise HTTPException(status_code=400, detail="请先完成招标解读")
+
+    client = await get_chat_client()
+    try:
+        payload = await client.json_chat(
+            outline_messages(tender.title, serialize_analysis(analysis)), max_tokens=5000
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("大纲生成失败: %s", exc)
+        raise HTTPException(status_code=502, detail=f"模型调用失败: {exc}") from exc
+
+    cleaned = _clean_sections(payload.get("sections"))
+    if not cleaned:
+        raise HTTPException(status_code=502, detail="模型未返回有效章节结构")
+
+    document = await _document_of(db, tender_id)
+    if not document:
+        document = BidDocument(tender_id=tender_id, title=f"{tender.title} 投标文件", status="draft")
+        db.add(document)
+        await db.flush()
+    else:
+        await db.execute(delete(BidSection).where(BidSection.document_id == document.id))
+
+    position = 0
+    for index, top in enumerate(cleaned, start=1):
+        key = f"s{index}"
+        db.add(
+            BidSection(
+                document_id=document.id,
+                position=position,
+                parent_key=None,
+                heading=top["heading"],
+                intent=top["intent"],
+                target_words=top["targetWords"],
+            )
+        )
+        position += 1
+        for child_index, child in enumerate(top["children"], start=1):
+            db.add(
+                BidSection(
+                    document_id=document.id,
+                    position=position,
+                    parent_key=key,
+                    heading=child["heading"],
+                    intent=child["intent"],
+                    target_words=child["targetWords"],
+                )
+            )
+            position += 1
+
+    await db.execute(
+        update(Outline)
+        .where(Outline.tender_id == tender_id, Outline.is_current.is_(True))
+        .values(is_current=False)
+    )
+    latest = await db.scalar(
+        select(Outline.revision).where(Outline.tender_id == tender_id).order_by(
+            Outline.revision.desc()
+        )
+    )
+    outline = Outline(tender_id=tender_id, revision=(latest or 0) + 1, sections=cleaned, is_current=True)
+    db.add(outline)
+    if tender.status in {TenderStatus.INTAKE, TenderStatus.ANALYZED, TenderStatus.OUTLINED}:
+        tender.status = TenderStatus.OUTLINED
+    db.add(
+        AuditEvent(
+            actor=account.username,
+            action="outline.build",
+            target_type="tender",
+            target_id=tender_id,
+            detail={"revision": outline.revision, "sections": position},
+        )
+    )
+    await db.flush()
+
+    sections = (
+        await db.execute(
+            select(BidSection)
+            .where(BidSection.document_id == document.id)
+            .order_by(BidSection.position.asc())
+        )
+    ).scalars().all()
+    return serialize_outline(outline, document, list(sections))
+
+
+@router.get("/{tender_id}/outline")
+async def get_outline(
+    tender_id: str,
+    _: Account = Depends(require_permission("tender.read")),
+    db: AsyncSession = Depends(get_db),
+):
+    document = await _document_of(db, tender_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="尚未生成标书大纲")
+    outline = (
+        await db.execute(
+            select(Outline)
+            .where(Outline.tender_id == tender_id, Outline.is_current.is_(True))
+            .order_by(Outline.created_at.desc())
+        )
+    ).scalar_one_or_none()
+    sections = (
+        await db.execute(
+            select(BidSection)
+            .where(BidSection.document_id == document.id)
+            .order_by(BidSection.position.asc())
+        )
+    ).scalars().all()
+    return serialize_outline(outline, document, list(sections))

@@ -1,0 +1,45 @@
+# 密钥与环境
+.env
+.env.*
+docker/.env.docker
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# 虚拟环境与本地数据库
+venv/
+.venv/
+.pgsql/
+
+# Node
+**/node_modules/
+**/dist/
+**/.vite/
+
+# 运行时数据与日志
+var/
+projects/
+logs/
+web_dist/
+*.log
+
+# 测试与工具
+tests/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.git/
+.gitignore
+
+# 文档（保留许可证与说明）
+*.md
+!NOTICE.md
+!README.md

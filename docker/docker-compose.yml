@@ -1,0 +1,94 @@
+# ============================================================================
+# 智标 - Docker 编排
+#
+#   A) 全量部署（PostgreSQL + API）：
+#      docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra up -d --build
+#   B) 仅 API（外部数据库）：
+#      docker compose -f docker/docker-compose.yml --env-file docker/.env.docker up -d
+#
+# 页面与 API 由同一个容器、同一个端口提供。
+# ============================================================================
+
+x-api-env: &api-env
+  ZHIBIAO_DEBUG: ${ZHIBIAO_DEBUG:-false}
+  ZHIBIAO_HOST: 0.0.0.0
+  ZHIBIAO_PORT: 8000
+  ZHIBIAO_WEB_DIST: /app/web_dist
+
+  ZHIBIAO_DB_TYPE: ${ZHIBIAO_DB_TYPE:-postgresql}
+  ZHIBIAO_DATABASE_URL: ${ZHIBIAO_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-zhibiao}}
+
+  ZHIBIAO_AI_BASE_URL: ${ZHIBIAO_AI_BASE_URL:-https://token.sensenova.cn/v1}
+  ZHIBIAO_AI_API_KEY: ${ZHIBIAO_AI_API_KEY:-}
+  ZHIBIAO_AI_MODEL: ${ZHIBIAO_AI_MODEL:-sensenova-6.8-flash}
+  ZHIBIAO_AI_TIMEOUT: ${ZHIBIAO_AI_TIMEOUT:-60}
+
+  ZHIBIAO_BOOTSTRAP_USERNAME: ${ZHIBIAO_BOOTSTRAP_USERNAME:-admin}
+  ZHIBIAO_BOOTSTRAP_PASSWORD: ${ZHIBIAO_BOOTSTRAP_PASSWORD:-sxit@123456}
+  ZHIBIAO_ALLOWED_ORIGINS: ${ZHIBIAO_ALLOWED_ORIGINS:-}
+
+  DB_WAIT_TIMEOUT: ${DB_WAIT_TIMEOUT:-90}
+  UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["infra"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zhibiao}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-zhibiao}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    image: zhibiao-api:latest
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_started
+        required: false
+    volumes:
+      - appdata:/app/var
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    logging: *default-logging
+
+volumes:
+  pgdata:
+  appdata:
+
+networks:
+  default:
+    name: zhibiao-net
+    driver: bridge

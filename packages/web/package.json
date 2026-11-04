@@ -1,0 +1,27 @@
+{
+  "name": "zhibiao-web",
+  "version": "2.0.0",
+  "description": "智标 - 全流程智能招投标平台 Web 前端（纯 B/S）",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "Foulereee <1817558146@qq.com>",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.5.0",
+    "vite": "^7.0.0"
+  }
+}

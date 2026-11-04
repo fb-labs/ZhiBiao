@@ -1,0 +1,89 @@
+# ============================================================================
+# 智标镜像（纯 B/S：一个容器、一个端口同时提供页面与 API）
+# 多阶段构建：web（前端静态产物）→ builder（Python 依赖）→ runtime
+#
+# 构建：
+#   docker build -f docker/Dockerfile.api -t zhibiao-api:latest .
+# ============================================================================
+
+# ─────────────── Stage 1: web（前端构建）───────────────
+FROM node:22-alpine AS web
+
+WORKDIR /build
+COPY packages/web/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY packages/web/ ./
+RUN npm run build
+
+
+# ─────────────── Stage 2: builder（Python 依赖）───────────────
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml ./
+RUN pip install --prefix=/install -i https://mirrors.aliyun.com/pypi/simple/ .
+
+
+# ─────────────── Stage 3: runtime ───────────────
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Shanghai \
+    ZHIBIAO_HOST=0.0.0.0 \
+    ZHIBIAO_PORT=8000 \
+    ZHIBIAO_WEB_DIST=/app/web_dist \
+    ZHIBIAO_DATA_ROOT=/app/var \
+    ZHIBIAO_UPLOAD_ROOT=/app/var/uploads \
+    ZHIBIAO_DELIVERY_ROOT=/app/var/deliveries \
+    ZHIBIAO_TEMPLATE_ROOT=/app/var/templates \
+    PYTHONPATH=/app
+
+RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true
+
+# libpq5：asyncpg 运行；fonts-wqy-zenhei：PDF 交付中文字体；curl：健康检查
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 \
+        fonts-wqy-zenhei \
+        curl \
+        tzdata \
+    && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+RUN rm -rf /usr/local/lib/python3.12/site-packages/backend /usr/local/lib/python3.12/site-packages/zhibiao
+
+COPY --chown=app:app . .
+COPY --from=web --chown=app:app /web_dist /app/web_dist
+COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+
+RUN mkdir -p /app/var/uploads /app/var/deliveries /app/var/templates \
+    && chown -R app:app /app
+
+USER app
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+# worker 必须为 1：登录会话保存在进程内字典中。
+CMD ["sh", "-c", "uvicorn zhibiao.app:app --host 0.0.0.0 --port ${ZHIBIAO_PORT:-8000} --workers ${UVICORN_WORKERS:-1} --no-access-log"]
