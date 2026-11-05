@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserMenu } from '../components/UserMenu';
-import { api, type Account, type Assistant, type Provider } from '../api';
+import { api, type Account, type AgentSpec, type Assistant, type Provider } from '../api';
 
 type Props = {
   account: Account;
@@ -23,6 +23,7 @@ export function AiSettingsPage({ account, onLogout }: Props) {
   const navigate = useNavigate();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
+  const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -32,9 +33,14 @@ export function AiSettingsPage({ account, onLogout }: Props) {
 
   const load = async () => {
     try {
-      const [p, a] = await Promise.all([api.providers(), api.assistants()]);
+      const [p, a, g] = await Promise.all([
+        api.providers(),
+        api.assistants(),
+        api.agents().catch(() => ({ items: [] as AgentSpec[] })),
+      ]);
       setProviders(p.items);
       setAssistants(a.items);
+      setAgents(g.items);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '加载失败');
     }
@@ -133,7 +139,7 @@ export function AiSettingsPage({ account, onLogout }: Props) {
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="/">
-          <span className="brand-mark">智</span>
+          <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
           <span className="brand-copy"><strong>智标</strong><small>BID INTELLIGENCE</small></span>
         </a>
         <nav className="topnav">
@@ -196,7 +202,16 @@ export function AiSettingsPage({ account, onLogout }: Props) {
           <div className="assistant-list">
             {assistants.map((assistant) => (
               <div className="assistant-row" key={assistant.id}>
-                <div><strong>{assistant.label}</strong><span>{assistant.purpose || assistant.key}</span></div>
+                <div>
+                  <strong>{assistant.label}</strong>
+                  <span>{assistant.purpose || assistant.key}</span>
+                  <span>
+                    {(() => {
+                      const linked = agents.filter((agent) => agent.assistant === assistant.key).map((agent) => agent.name);
+                      return linked.length ? `关联：${linked.join('、')}` : '未关联 Agent';
+                    })()}
+                  </span>
+                </div>
                 <span>{assistant.model || '继承默认'}</span>
                 <span>{assistant.temperature}</span>
                 <button className={`toggle ${assistant.enabled ? 'on' : ''}`} onClick={() => toggleAssistant(assistant)}>

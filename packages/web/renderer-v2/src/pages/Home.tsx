@@ -97,7 +97,7 @@ export function HomePage({ account, onLogout }: Props) {
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="/">
-          <span className="brand-mark">智</span>
+          <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
           <span className="brand-copy">
             <strong>智标</strong>
             <small>BID INTELLIGENCE</small>
@@ -205,7 +205,7 @@ export function HomePage({ account, onLogout }: Props) {
                 <a className="sheet" key={tender.id} href={`/tender/${tender.id}`}>
                   <div className="sheet-top">
                     <span className="sheet-brandline">
-                      <i className="sheet-monogram">智</i>
+                      <i className="sheet-monogram"><img src="/logo-tile.png" alt="" /></i>
                       <span>
                         <strong>智标</strong>
                         <small>投标文件</small>

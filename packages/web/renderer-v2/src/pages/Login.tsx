@@ -33,7 +33,7 @@ export function LoginPage({ onLogin }: Props) {
       <div className="login-glow" />
       <header className="login-nav">
         <div className="brand">
-          <span className="brand-mark">智</span>
+          <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
           <span className="brand-copy">
             <strong>智标</strong>
             <small>BID INTELLIGENCE</small>

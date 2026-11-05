@@ -42,6 +42,7 @@ TENDER_READER = AgentSpec(
         TOOLS["read_facts"],
     ],
     max_steps=8,
+    assistant_key="analyst",
 )
 
 
@@ -64,6 +65,7 @@ PLANNER = AgentSpec(
         TOOLS["list_sections"],
     ],
     max_steps=6,
+    assistant_key="outliner",
 )
 
 
@@ -87,6 +89,7 @@ BUILDER = AgentSpec(
         TOOLS["audit_document"],
     ],
     max_steps=6,
+    assistant_key="writer",
 )
 
 
@@ -102,6 +105,7 @@ AUDITOR = AgentSpec(
 只报告能从成稿和招标事实中核实的问题；签字、盖章、封装、原件等放入人工核对。""",
     tools=[TOOLS["read_facts"], TOOLS["list_sections"], TOOLS["audit_document"]],
     max_steps=4,
+    assistant_key="reviewer",
 )
 
 
@@ -124,6 +128,7 @@ FIXER = AgentSpec(
         TOOLS["audit_document"],
     ],
     max_steps=8,
+    assistant_key="reviser",
 )
 
 
@@ -139,6 +144,7 @@ TEMPLATE_AGENT = AgentSpec(
 只依据解析结果，不得虚构模板章节。""",
     tools=[TOOLS["detect_mode"], TOOLS["extract_template"], TOOLS["list_sections"]],
     max_steps=4,
+    assistant_key="analyst",
 )
 
 

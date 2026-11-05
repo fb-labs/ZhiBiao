@@ -208,7 +208,7 @@ async def run_review(
         issues.extend(_rule_checks(tender, list(sections), analysis, full_text))
 
     if payload.mode in {ReviewMode.AI, ReviewMode.MIXED} and full_text:
-        client = await get_chat_client()
+        client = await get_chat_client(assistant="reviewer")
         try:
             verdict = await client.json_chat(
                 review_messages(tender.title, analysis_brief(analysis), full_text),
@@ -378,7 +378,7 @@ async def propose_fix(
     if not (section.body or "").strip():
         raise HTTPException(status_code=400, detail="该章节正文为空，请先生成或手工补写")
 
-    client = await get_chat_client()
+    client = await get_chat_client(assistant="reviser")
     try:
         revised = await client.chat(
             fix_messages(section.heading, issue.finding, issue.recommendation, section.body),

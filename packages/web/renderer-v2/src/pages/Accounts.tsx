@@ -143,7 +143,7 @@ export function AccountsPage({ account, onLogout }: Props) {
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="/">
-          <span className="brand-mark">智</span>
+          <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
           <span className="brand-copy"><strong>智标</strong><small>BID INTELLIGENCE</small></span>
         </a>
         <nav className="topnav">

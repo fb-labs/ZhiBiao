@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from zhibiao.database import database_ready, session_factory
-from zhibiao.models import AiProvider
+from zhibiao.models import AiProvider, Assistant
 from zhibiao.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -33,11 +33,21 @@ def _temperature(model: str, value: float | None, fallback: float) -> float:
 
 
 class ChatClient:
-    def __init__(self, base_url: str, api_key: str, model: str, timeout: int = 60) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout: int = 60,
+        temperature: float = 0.6,
+        max_tokens: int = 0,
+    ) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.temperature = temperature
+        self.max_tokens = max_tokens
         self._client = AsyncOpenAI(
             api_key=api_key or "not-configured",
             base_url=base_url,
@@ -69,10 +79,10 @@ class ChatClient:
                 kwargs: dict = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": _temperature(self.model, temperature, 0.6),
+                    "temperature": _temperature(self.model, temperature, self.temperature),
                 }
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
+                if max_tokens or self.max_tokens:
+                    kwargs["max_tokens"] = max_tokens or self.max_tokens
                 if json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
                 response = await self._client.chat.completions.create(**kwargs)
@@ -124,11 +134,11 @@ class ChatClient:
                 kwargs: dict = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": _temperature(self.model, temperature, 0.6),
+                    "temperature": _temperature(self.model, temperature, self.temperature),
                     "stream": True,
                 }
-                if max_tokens:
-                    kwargs["max_tokens"] = max_tokens
+                if max_tokens or self.max_tokens:
+                    kwargs["max_tokens"] = max_tokens or self.max_tokens
                 stream = await self._client.chat.completions.create(**kwargs)
                 async for chunk in stream:
                     delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -183,6 +193,61 @@ async def _provider_settings(model: str | None = None) -> dict:
     return data
 
 
-async def get_chat_client(model: str | None = None) -> ChatClient:
+async def _assistant_settings(key: str | None) -> dict | None:
+    if not key or not database_ready():
+        return None
+    try:
+        async with session_factory()() as db:
+            assistant = (
+                await db.execute(select(Assistant).where(Assistant.key == key))
+            ).scalar_one_or_none()
+            if not assistant:
+                return None
+            provider = None
+            if assistant.provider_id:
+                provider = await db.get(AiProvider, assistant.provider_id)
+            if not provider or not provider.is_active:
+                provider = (
+                    await db.execute(
+                        select(AiProvider).where(
+                            AiProvider.is_active.is_(True), AiProvider.is_default.is_(True)
+                        )
+                    )
+                ).scalar_one_or_none()
+            return {
+                "enabled": bool(assistant.enabled),
+                "base_url": provider.base_url if provider else "",
+                "api_key": provider.api_key if provider else "",
+                "model": assistant.model or (provider.model if provider else ""),
+                "temperature": assistant.temperature,
+                "max_tokens": assistant.max_tokens,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("读取协作助手配置失败，使用默认模型服务: %s", exc)
+        return None
+
+
+async def get_chat_client(
+    model: str | None = None,
+    assistant: str | None = None,
+) -> ChatClient:
     data = await _provider_settings(model)
-    return ChatClient(data["base_url"], data["api_key"], data["model"], data["timeout"])
+    template = await _assistant_settings(assistant)
+    temperature = 0.6
+    max_tokens = 0
+    if template and template["enabled"]:
+        if template["base_url"]:
+            data["base_url"] = template["base_url"]
+        if template["api_key"]:
+            data["api_key"] = template["api_key"]
+        data["model"] = model or template["model"] or data["model"]
+        temperature = template["temperature"]
+        max_tokens = template["max_tokens"]
+    return ChatClient(
+        data["base_url"],
+        data["api_key"],
+        data["model"],
+        data["timeout"],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )

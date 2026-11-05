@@ -40,6 +40,7 @@ class AgentSpec:
     system_prompt: str
     tools: list[ToolSpec] = field(default_factory=list)
     max_steps: int = 6
+    assistant_key: str = ""
 
     def tool_prompt(self) -> str:
         lines = [
@@ -53,6 +54,7 @@ class AgentSpec:
             "name": self.name,
             "description": self.description,
             "maxSteps": self.max_steps,
+            "assistant": self.assistant_key,
             "tools": [{"name": tool.name, "description": tool.description} for tool in self.tools],
         }
 
@@ -82,8 +84,9 @@ class AgentRunner:
         context: AgentContext,
         task: str,
         payload: dict | None = None,
+        assistant: str | None = None,
     ) -> dict:
-        client: ChatClient = await get_chat_client()
+        client: ChatClient = await get_chat_client(assistant=assistant or spec.assistant_key)
         messages: list[dict] = [
             {
                 "role": "system",

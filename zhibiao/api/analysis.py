@@ -142,7 +142,7 @@ async def run_analysis(
     if len(corpus) < 200:
         raise HTTPException(status_code=400, detail="请先上传可解析的招标文件，正文过短")
 
-    client = await get_chat_client()
+    client = await get_chat_client(assistant="analyst")
     try:
         payload = await client.json_chat(
             analysis_messages(tender.title, tender.buyer, corpus), max_tokens=6000

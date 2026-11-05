@@ -124,7 +124,7 @@ class AgentManager:
                     payload = {**payload, "tenderDigest": digest["digest"]}
             task = str(payload.get("task") or spec.description)
             runner = AgentRunner()
-            outcome = await runner.run(spec, context, task, payload)
+            outcome = await runner.run(spec, context, task, payload, assistant=spec.assistant_key)
             if cancel.is_set():
                 await self._update(
                     job_id,

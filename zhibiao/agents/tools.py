@@ -380,7 +380,7 @@ async def generate_missing(ctx: AgentContext, args: dict) -> dict:
         tender_obj = tender
     if not selected:
         return {"generated": 0, "failed": 0, "message": "没有需要生成的章节"}
-    client = await get_chat_client()
+    client = await get_chat_client(assistant="writer")
     generated = 0
     failed = 0
     errors = []
@@ -454,7 +454,7 @@ async def fix_section(ctx: AgentContext, args: dict) -> dict:
         row = await db.get(BidSection, section_id)
     if not row:
         return {"error": "章节不存在"}
-    client = await get_chat_client()
+    client = await get_chat_client(assistant="reviser")
     revised = await client.chat(
         fix_messages(row.heading, finding, recommendation, row.body or ""),
         max_tokens=4000,

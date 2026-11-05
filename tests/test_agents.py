@@ -93,7 +93,7 @@ def test_agent_runner_tool_loop(monkeypatch):
                 return {"thought": "调用工具", "action": "echo", "args": {"value": "ok"}}
             return {"thought": "完成", "action": "finish", "args": {"result": {"done": True}}}
 
-    async def fake_client():
+    async def fake_client(**_kwargs):
         return FakeClient()
 
     async def echo(_context, args):

@@ -49,6 +49,14 @@ const FACT_LABEL: Record<string, string> = {
   deposit: '投标保证金',
 };
 
+const ASSISTANT_LABEL: Record<string, string> = {
+  analyst: '招标解读',
+  outliner: '大纲规划',
+  writer: '标书撰写',
+  reviewer: '评标审核',
+  reviser: '修订',
+};
+
 const SEVERITY_LABEL: Record<string, string> = {
   blocker: '阻断',
   critical: '严重',
@@ -57,7 +65,7 @@ const SEVERITY_LABEL: Record<string, string> = {
   info: '提示',
 };
 
-type Tab = 'overview' | 'files' | 'analysis' | 'writing' | 'review' | 'delivery' | 'agents';
+type Tab = 'overview' | 'files' | 'analysis' | 'writing' | 'review' | 'delivery';
 
 type Props = {
   account: Account;
@@ -88,7 +96,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const [generationJob, setGenerationJob] = useState<GenerationJob | null>(null);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
   const [agentSpecs, setAgentSpecs] = useState<AgentSpec[]>([]);
-  const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
   const [agentJob, setAgentJob] = useState<AgentRun | null>(null);
   const [agentFacts, setAgentFacts] = useState<Record<string, unknown> | null>(null);
   const [agentIssues, setAgentIssues] = useState<GenerationIssue[]>([]);
@@ -143,7 +150,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       }
       if (agentRunsResult.status === 'fulfilled') {
         const state = agentRunsResult.value;
-        setAgentRuns(state.items);
         setAgentJob(state.active || state.items[0] || null);
       }
       if (agentFactsResult.status === 'fulfilled') {
@@ -373,7 +379,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       const job = await api.runAgent(id, spec.key, payload);
       setAgentJob(job);
       setAgentTraceOpen(true);
-      setTab('agents');
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '启动 Agent 失败');
     }
@@ -550,7 +555,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     <div className="shell">
       <header className="topbar">
         <a className="brand" href="/">
-          <span className="brand-mark">智</span>
+          <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
           <span className="brand-copy"><strong>智标</strong><small>BID INTELLIGENCE</small></span>
         </a>
         <nav className="topnav">
@@ -589,9 +594,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             <button className={`util ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>概览</button>
             <button className={`util ${tab === 'files' ? 'active' : ''}`} onClick={() => setTab('files')}>
               资料文件 <span>{files.length}</span>
-            </button>
-            <button className={`util ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>
-              Agents
             </button>
             <i className="tab-sep" />
             <button className={tab === 'analysis' ? 'active' : ''} onClick={() => setTab('analysis')}>
@@ -801,6 +803,18 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   )}
                 </>
               )}
+              <AgentAssist
+                specs={agentSpecs.filter((spec) => spec.key === 'tender_reader')}
+                job={agentJob}
+                busy={agentBusy}
+                canRun={canWrite && files.length > 0}
+                traceOpen={agentTraceOpen}
+                onRun={runAgent}
+                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
+                onCancel={cancelAgent}
+                hint="可选：先从招标原文抽取项目事实、材料、参数与模板章节，供核对与修复使用。"
+                facts={agentFacts}
+              />
             </div>
           )}
 
@@ -1000,6 +1014,17 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   </div>
                 </>
               )}
+              <AgentAssist
+                specs={agentSpecs.filter((spec) => ['template', 'planner', 'builder'].includes(spec.key))}
+                job={agentJob}
+                busy={agentBusy}
+                canRun={canWrite}
+                traceOpen={agentTraceOpen}
+                onRun={runAgent}
+                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
+                onCancel={cancelAgent}
+                hint="可选：模板 Agent 识别生成模式，规划 Agent 生成大纲，编制 Agent 批量写作。"
+              />
             </div>
           )}
 
@@ -1114,6 +1139,19 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   </button>
                 </div>
               )}
+
+              <AgentAssist
+                specs={agentSpecs.filter((spec) => ['auditor', 'fixer'].includes(spec.key))}
+                job={agentJob}
+                busy={agentBusy}
+                canRun={canWrite && !!document}
+                traceOpen={agentTraceOpen}
+                onRun={runAgent}
+                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
+                onCancel={cancelAgent}
+                hint="可选：核对 Agent 按招标事实核对成稿，修复 Agent 按问题改写章节。"
+                issues={agentIssues}
+              />
             </div>
           )}
 
@@ -1156,119 +1194,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             </div>
           )}
 
-          {tab === 'agents' && (
-            <div className="agents-panel">
-              <div className="panel-head">
-                <div>
-                  <p className="eyebrow">AGENT STUDIO</p>
-                  <h2>Agent 中心</h2>
-                  <p className="panel-lead">
-                    六个 Agent 分工协作：先抽取招标事实，再规划与编制，最后按原文核对并修复。
-                  </p>
-                </div>
-              </div>
-
-              {agentJob && (
-                <div className={`agent-run ${agentJob.status}`}>
-                  <div className="agent-run-head">
-                    <strong>{agentJob.message}</strong>
-                    <span>{agentJob.progress}%</span>
-                  </div>
-                  <div className="gen-track">
-                    <i style={{ width: `${Math.max(2, agentJob.progress)}%` }} />
-                  </div>
-                  <div className="agent-run-foot">
-                    <span>{agentJob.result?.error || agentJob.status}</span>
-                    <div className="agent-run-actions">
-                      {(agentJob.result?.trace?.length ?? 0) > 0 && (
-                        <button className="ghost-button small" onClick={() => setAgentTraceOpen((value) => !value)}>
-                          {agentTraceOpen ? '收起轨迹' : `查看轨迹 (${agentJob.result?.trace?.length})`}
-                        </button>
-                      )}
-                      {['queued', 'running'].includes(agentJob.status) && (
-                        <button className="ghost-button danger small" onClick={cancelAgent}>
-                          取消
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {agentTraceOpen && (agentJob.result?.trace?.length ?? 0) > 0 && (
-                    <ol className="agent-trace">
-                      {agentJob.result?.trace?.map((step) => (
-                        <li key={step.step}>
-                          <span>{String(step.step).padStart(2, '0')}</span>
-                          <div>
-                            <strong>{step.action}</strong>
-                            <p>{step.thought || '—'}</p>
-                          </div>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </div>
-              )}
-
-              <div className="agent-grid">
-                {agentSpecs.map((spec, index) => (
-                  <article className={`agent-card ${agentJob?.payload?.agent === spec.key ? 'active' : ''}`} key={spec.key}>
-                    <span className="agent-index">{String(index + 1).padStart(2, '0')}</span>
-                    <h3>{spec.name}</h3>
-                    <p>{spec.description}</p>
-                    <small>{spec.tools.length} 个工具 · 最多 {spec.maxSteps} 步</small>
-                    <button className="primary-button small" onClick={() => runAgent(spec)} disabled={agentBusy || !canWrite}>
-                      {agentBusy ? '运行中…' : '运行 Agent'}
-                    </button>
-                  </article>
-                ))}
-              </div>
-
-              {(agentFacts as { project?: Record<string, string> } | null)?.project && (
-                <div className="agent-facts">
-                  <div className="quality-head">
-                    <strong>招标事实台账</strong>
-                    <span>由招标解析 Agent 抽取</span>
-                  </div>
-                  <dl className="facts-grid">
-                    {Object.entries((agentFacts as { project: Record<string, string> }).project)
-                      .filter(([, value]) => value)
-                      .map(([key, value]) => (
-                        <div key={key}>
-                          <dt>{FACT_LABEL[key] || key}</dt>
-                          <dd>{value}</dd>
-                        </div>
-                      ))}
-                  </dl>
-                  <div className="facts-chips">
-                    <span>材料 {((agentFacts as { materials?: unknown[] }).materials || []).length}</span>
-                    <span>参数 {((agentFacts as { parameters?: unknown[] }).parameters || []).length}</span>
-                    <span>资格 {((agentFacts as { qualifications?: unknown[] }).qualifications || []).length}</span>
-                    <span>承诺 {((agentFacts as { commitments?: unknown[] }).commitments || []).length}</span>
-                    <span>模板章节 {(((agentFacts as { template?: { chapters?: unknown[] } }).template || {}).chapters || []).length}</span>
-                  </div>
-                </div>
-              )}
-
-              {agentIssues.length > 0 && (
-                <div className="quality-panel">
-                  <div className="quality-head">
-                    <strong>核对结果</strong>
-                    <span>{agentIssues.length} 项</span>
-                  </div>
-                  <ul className="quality-list">
-                    {agentIssues.slice(0, 12).map((issue, index) => (
-                      <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
-                        <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
-                        <div>
-                          <strong>{issue.heading || '全文'}</strong>
-                          <p>{issue.message}</p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
         </section>
       </main>
 
@@ -1281,6 +1206,152 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             </div>
             <pre>{preview.text || '未解析出文本'}</pre>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type AgentAssistProps = {
+  specs: AgentSpec[];
+  job: AgentRun | null;
+  busy: boolean;
+  canRun: boolean;
+  traceOpen: boolean;
+  onRun: (spec: AgentSpec) => void;
+  onToggleTrace: () => void;
+  onCancel: () => void;
+  hint: string;
+  facts?: Record<string, unknown> | null;
+  issues?: GenerationIssue[];
+};
+
+function AgentAssist({
+  specs,
+  job,
+  busy,
+  canRun,
+  traceOpen,
+  onRun,
+  onToggleTrace,
+  onCancel,
+  hint,
+  facts,
+  issues,
+}: AgentAssistProps) {
+  if (!specs.length) return null;
+  const agentKey = job?.payload?.agent as string | undefined;
+  const visible = job && specs.some((spec) => spec.key === agentKey) ? job : null;
+  const factProject = (facts as { project?: Record<string, string> } | null)?.project;
+  return (
+    <div className="agent-assist">
+      <div className="agent-assist-head">
+        <div>
+          <p className="eyebrow">AGENT ASSIST</p>
+          <strong>Agent 辅助</strong>
+          <span>{hint}</span>
+        </div>
+      </div>
+      <div className="agent-assist-grid">
+        {specs.map((spec) => (
+          <article className={`agent-mini ${visible?.payload?.agent === spec.key ? 'active' : ''}`} key={spec.key}>
+            <div>
+              <strong>{spec.name}</strong>
+              <small>
+                {spec.description}
+                {spec.assistant ? `（${ASSISTANT_LABEL[spec.assistant] || spec.assistant}助手）` : ''}
+              </small>
+            </div>
+            <button className="ghost-button small" onClick={() => onRun(spec)} disabled={busy || !canRun}>
+              {busy && visible?.payload?.agent === spec.key ? '运行中…' : '运行'}
+            </button>
+          </article>
+        ))}
+      </div>
+
+      {visible && (
+        <div className={`agent-run ${visible.status}`}>
+          <div className="agent-run-head">
+            <strong>{visible.message}</strong>
+            <span>{visible.progress}%</span>
+          </div>
+          <div className="gen-track">
+            <i style={{ width: `${Math.max(2, visible.progress)}%` }} />
+          </div>
+          <div className="agent-run-foot">
+            <span>{visible.result?.error || visible.status}</span>
+            <div className="agent-run-actions">
+              {(visible.result?.trace?.length ?? 0) > 0 && (
+                <button className="ghost-button small" onClick={onToggleTrace}>
+                  {traceOpen ? '收起轨迹' : `查看轨迹 (${visible.result?.trace?.length})`}
+                </button>
+              )}
+              {['queued', 'running'].includes(visible.status) && (
+                <button className="ghost-button danger small" onClick={onCancel}>
+                  取消
+                </button>
+              )}
+            </div>
+          </div>
+          {traceOpen && (visible.result?.trace?.length ?? 0) > 0 && (
+            <ol className="agent-trace">
+              {visible.result?.trace?.map((step) => (
+                <li key={step.step}>
+                  <span>{String(step.step).padStart(2, '0')}</span>
+                  <div>
+                    <strong>{step.action}</strong>
+                    <p>{step.thought || '—'}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+
+      {factProject && (
+        <div className="agent-facts">
+          <div className="quality-head">
+            <strong>招标事实台账</strong>
+            <span>由招标解析 Agent 抽取</span>
+          </div>
+          <dl className="facts-grid">
+            {Object.entries(factProject)
+              .filter(([, value]) => value)
+              .map(([key, value]) => (
+                <div key={key}>
+                  <dt>{FACT_LABEL[key] || key}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+          </dl>
+          <div className="facts-chips">
+            <span>材料 {((facts as { materials?: unknown[] }).materials || []).length}</span>
+            <span>参数 {((facts as { parameters?: unknown[] }).parameters || []).length}</span>
+            <span>资格 {((facts as { qualifications?: unknown[] }).qualifications || []).length}</span>
+            <span>承诺 {((facts as { commitments?: unknown[] }).commitments || []).length}</span>
+            <span>模板章节 {(((facts as { template?: { chapters?: unknown[] } }).template || {}).chapters || []).length}</span>
+          </div>
+        </div>
+      )}
+
+      {issues && issues.length > 0 && (
+        <div className="quality-panel">
+          <div className="quality-head">
+            <strong>Agent 核对结果</strong>
+            <span>{issues.length} 项</span>
+          </div>
+          <ul className="quality-list">
+            {issues.slice(0, 12).map((issue, index) => (
+              <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
+                <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
+                <div>
+                  <strong>{issue.heading || '全文'}</strong>
+                  <p>{issue.message}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

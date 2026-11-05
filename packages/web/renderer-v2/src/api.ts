@@ -132,6 +132,7 @@ export type AgentSpec = {
   name: string;
   description: string;
   maxSteps: number;
+  assistant?: string;
   tools: { name: string; description: string }[];
 };
 

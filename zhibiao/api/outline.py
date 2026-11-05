@@ -137,7 +137,7 @@ async def build_outline(
         if options.templateId:
             note += "（未使用指定模板，当前按内置结构生成）"
     else:
-        client = await get_chat_client()
+        client = await get_chat_client(assistant="outliner")
         try:
             result = await client.json_chat(
                 outline_messages(tender.title, serialize_analysis(analysis), options.targetWords),

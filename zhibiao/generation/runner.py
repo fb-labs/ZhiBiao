@@ -181,7 +181,7 @@ class GenerationManager:
                 progress=0,
                 message=f"开始生成，共 {total} 节",
             )
-            client = await get_chat_client()
+            client = await get_chat_client(assistant="writer")
             done = 0
             failed = 0
             generated = 0

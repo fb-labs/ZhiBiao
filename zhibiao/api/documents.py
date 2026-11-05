@@ -217,7 +217,7 @@ async def generate_section(
     async def event_stream() -> AsyncIterator[str]:
         chunks: list[str] = []
         try:
-            client = await get_chat_client()
+            client = await get_chat_client(assistant="writer")
             async for delta in stream_body(client, tender, analysis, section, list(sections)):
                 chunks.append(delta)
                 yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"

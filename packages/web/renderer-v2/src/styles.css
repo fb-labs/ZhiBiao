@@ -2585,6 +2585,69 @@ button {
   margin-top: 6px;
 }
 
+.agent-assist {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px dashed rgba(99, 102, 241, 0.28);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.05), rgba(34, 211, 238, 0.04));
+}
+
+.agent-assist-head strong {
+  display: block;
+  font-size: 15px;
+  color: var(--ink-strong);
+}
+
+.agent-assist-head span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.agent-assist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.agent-mini {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.agent-mini.active {
+  border-color: rgba(99, 102, 241, 0.42);
+  box-shadow: 0 10px 24px rgba(49, 46, 129, 0.08);
+}
+
+.agent-mini strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-strong);
+}
+
+.agent-mini small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.agent-mini button {
+  flex: 0 0 auto;
+}
+
 .agent-run {
   margin-bottom: 16px;
   padding: 14px 16px;
@@ -3473,5 +3536,543 @@ body {
 
   .insights {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   增强动效层
+   ============================================================ */
+@keyframes zb-aurora-drift {
+  0% { transform: translate3d(-3%, -2%, 0) scale(1) rotate(0deg); }
+  50% { transform: translate3d(4%, 3%, 0) scale(1.12) rotate(6deg); }
+  100% { transform: translate3d(-2%, 4%, 0) scale(1.04) rotate(-4deg); }
+}
+
+@keyframes zb-sheen-sweep {
+  0% { transform: translateX(-160%) skewX(-18deg); opacity: 0; }
+  18% { opacity: 0.8; }
+  60% { opacity: 0.2; }
+  100% { transform: translateX(260%) skewX(-18deg); opacity: 0; }
+}
+
+@keyframes zb-logo-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 10px 24px rgba(19, 53, 98, 0.18); }
+  50% { transform: scale(1.045); box-shadow: 0 16px 34px rgba(19, 53, 98, 0.28); }
+}
+
+@keyframes zb-soft-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes zb-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); }
+}
+
+@keyframes zb-panel-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes zb-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes zb-number-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes zb-bar-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes zb-bar-rise {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes zb-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes zb-gradient-pan {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes zb-scan {
+  0% { transform: translateY(-55%); opacity: 0.2; }
+  50% { opacity: 0.75; }
+  100% { transform: translateY(55%); opacity: 0.2; }
+}
+
+@keyframes zb-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zb-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes zb-ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.2), 0 10px 24px rgba(99, 102, 241, 0.16); }
+  50% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0), 0 16px 34px rgba(99, 102, 241, 0.22); }
+}
+
+@keyframes zb-button-sheen {
+  from { transform: translateX(-160%) skewX(-18deg); }
+  to { transform: translateX(260%) skewX(-18deg); }
+}
+
+/* 品牌 Logo */
+.brand-mark {
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(19, 53, 98, 0.12);
+  box-shadow: 0 10px 24px rgba(19, 53, 98, 0.18);
+  animation: zb-logo-breathe 5.5s ease-in-out infinite;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s cubic-bezier(0.22, 0.8, 0.28, 1);
+}
+
+.brand:hover .brand-mark img {
+  transform: scale(1.1) rotate(-3deg);
+}
+
+/* 首页 Hero 呼吸光晕 */
+.hero::after,
+.tender-hero::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(300px 300px at 26% 32%, rgba(34, 211, 238, 0.22), transparent 66%),
+    radial-gradient(360px 360px at 74% 70%, rgba(139, 92, 246, 0.22), transparent 66%);
+  filter: blur(8px);
+  animation: zb-aurora-drift 18s ease-in-out infinite alternate;
+}
+
+/* 三维场景扫描光带 */
+.hero-visual::after {
+  content: "";
+  position: absolute;
+  inset: -60% 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(99, 102, 241, 0.08), transparent);
+  animation: zb-scan 7s linear infinite;
+  mix-blend-mode: screen;
+}
+
+/* 登录页 */
+.login-glow {
+  z-index: 1;
+  background-size: 220% 100%;
+  animation: zb-login-glow 7s ease-in-out infinite;
+}
+
+@keyframes zb-login-glow {
+  0%, 100% { background-position: 170% 0; opacity: 0.45; }
+  50% { background-position: -70% 0; opacity: 0.9; }
+}
+
+.login::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(300px 300px at 24% 30%, rgba(34, 211, 238, 0.16), transparent 68%),
+    radial-gradient(380px 380px at 76% 70%, rgba(139, 92, 246, 0.2), transparent 68%);
+  filter: blur(10px);
+  animation: zb-aurora-drift 20s ease-in-out infinite alternate;
+}
+
+.login-status i {
+  animation: zb-dot-pulse 2.2s ease-in-out infinite;
+}
+
+.login-copy h1 span {
+  background-size: 220% auto;
+  animation: zb-gradient-pan 6s linear infinite;
+}
+
+.login-metrics div {
+  animation: zb-card-in 0.7s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.login-metrics div:nth-child(2) { animation-delay: 0.06s; }
+.login-metrics div:nth-child(3) { animation-delay: 0.12s; }
+.login-metrics div:nth-child(4) { animation-delay: 0.18s; }
+
+.login-metrics div {
+  transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease;
+}
+
+.login-metrics div:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.login-card {
+  animation: zb-pop 0.75s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+  transition: box-shadow 0.3s ease;
+}
+
+.login-card:hover {
+  box-shadow: 0 36px 90px rgba(5, 10, 40, 0.5);
+}
+
+/* 按钮光泽 */
+.primary-button {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.primary-button::after {
+  content: "";
+  position: absolute;
+  top: -40%;
+  bottom: -40%;
+  left: -70%;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  transform: skewX(-18deg);
+}
+
+.primary-button:hover::after {
+  animation: zb-button-sheen 1.1s ease-out;
+}
+
+.primary-button:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 18px 36px rgba(99, 102, 241, 0.42);
+}
+
+.primary-button:disabled::after {
+  animation: none;
+}
+
+.ghost-button {
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ghost-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(49, 46, 129, 0.08);
+}
+
+/* 投标书卡片 */
+.sheet {
+  animation: zb-card-in 0.65s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.sheet:nth-child(2) { animation-delay: 0.04s; }
+.sheet:nth-child(3) { animation-delay: 0.08s; }
+.sheet:nth-child(4) { animation-delay: 0.12s; }
+.sheet:nth-child(5) { animation-delay: 0.16s; }
+.sheet:nth-child(6) { animation-delay: 0.2s; }
+
+.sheet:hover {
+  transform: translateY(-9px) rotate(-0.5deg);
+}
+
+.sheet::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(115deg, transparent 28%, rgba(139, 92, 246, 0.1) 45%, transparent 62%);
+  background-size: 220% 100%;
+  transition: opacity 0.28s ease;
+}
+
+.sheet:hover::after {
+  opacity: 1;
+  animation: zb-shimmer 2.4s linear infinite;
+}
+
+.sheet-new::after {
+  display: none;
+}
+
+.sheet-plus {
+  animation: zb-soft-float 4.5s ease-in-out infinite;
+}
+
+.sheet-monogram {
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(19, 53, 98, 0.12);
+}
+
+.sheet-monogram img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.35s ease;
+}
+
+.sheet:hover .sheet-monogram img {
+  transform: scale(1.12) rotate(-4deg);
+}
+
+/* 统计卡 */
+.stat-card {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(99, 102, 241, 0.28);
+  box-shadow: 0 22px 44px rgba(49, 46, 129, 0.14);
+}
+
+.stat-card::before {
+  background-size: 220% 100%;
+  animation: zb-gradient-pan 5s linear infinite;
+}
+
+.stat-card::after {
+  content: "";
+  position: absolute;
+  right: -30px;
+  bottom: -42px;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.18), transparent 70%);
+  animation: zb-soft-float 6s ease-in-out infinite;
+}
+
+.stat-card strong {
+  animation: zb-number-pop 0.65s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.stat-card:nth-child(2) strong { animation-delay: 0.06s; }
+.stat-card:nth-child(3) strong { animation-delay: 0.12s; }
+.stat-card:nth-child(4) strong { animation-delay: 0.18s; }
+
+/* 流程轨道 */
+.flow-rail li {
+  animation: zb-card-in 0.7s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+  transition: transform 0.2s ease;
+}
+
+.flow-rail li:nth-child(2) { animation-delay: 0.06s; }
+.flow-rail li:nth-child(3) { animation-delay: 0.12s; }
+.flow-rail li:nth-child(4) { animation-delay: 0.18s; }
+.flow-rail li:nth-child(5) { animation-delay: 0.24s; }
+
+.flow-rail li:hover {
+  transform: translateY(-2px);
+}
+
+.flow-rail li + li::before {
+  animation: zb-dot-pulse 2.8s ease-in-out infinite;
+}
+
+/* 场景标注连接线 */
+.scene-caption i {
+  background-size: 220% 100%;
+  animation: zb-gradient-pan 4s linear infinite;
+}
+
+/* 页签 */
+.tab-bar button {
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.tab-bar button:hover {
+  transform: translateY(-1px);
+}
+
+.tab-bar button.active {
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.16);
+}
+
+.tab-bar button.active .tab-step {
+  animation: zb-dot-pulse 2.4s ease-in-out infinite;
+}
+
+/* 面板入场 */
+.analysis-panel,
+.writing-panel,
+.review-panel,
+.delivery-panel,
+.detail-grid,
+.files-panel,
+.agents-panel {
+  animation: zb-panel-in 0.45s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.panel,
+.info-card,
+.admin-block,
+.files-panel,
+.tabs {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.panel:hover,
+.info-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.24);
+  box-shadow: 0 24px 50px rgba(49, 46, 129, 0.12);
+}
+
+/* 详情页卡片 */
+.section-card {
+  animation: zb-card-in 0.45s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+  transition: box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.section-card:hover {
+  border-color: rgba(99, 102, 241, 0.24);
+  box-shadow: 0 16px 34px rgba(49, 46, 129, 0.09);
+}
+
+.dimension-card,
+.issue-card,
+.file-row,
+.agent-card,
+.agent-mini {
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.dimension-card:hover,
+.issue-card:hover,
+.agent-card:hover,
+.agent-mini:hover {
+  transform: translateY(-2px);
+  border-color: rgba(99, 102, 241, 0.26);
+  box-shadow: 0 14px 30px rgba(49, 46, 129, 0.08);
+}
+
+.file-row:hover {
+  transform: translateX(3px);
+}
+
+/* 审核分数环 */
+.score-ring {
+  animation: zb-ring-pulse 3.2s ease-in-out infinite;
+}
+
+/* 进度与状态条 */
+.status-fill {
+  transform-origin: left center;
+  animation: zb-bar-grow 0.9s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.mini-bar div {
+  transform-origin: bottom center;
+  animation: zb-bar-rise 0.8s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+.gen-track i {
+  background-image: linear-gradient(90deg, #8b5cf6, #22d3ee, #8b5cf6);
+  background-size: 200% 100%;
+  animation: zb-shimmer 1.8s linear infinite;
+}
+
+/* 弹窗 */
+.modal-mask {
+  animation: zb-fade 0.25s ease both;
+}
+
+.modal {
+  animation: zb-pop 0.38s cubic-bezier(0.16, 0.84, 0.3, 1) backwards;
+}
+
+/* 减少动态效果 */
+@media (prefers-reduced-motion: reduce) {
+  .hero::after,
+  .tender-hero::after,
+  .hero-visual::after,
+  .login-glow,
+  .login::after,
+  .login-status i,
+  .login-copy h1 span,
+  .brand-mark,
+  .sheet-plus,
+  .stat-card::before,
+  .stat-card::after,
+  .flow-rail li + li::before,
+  .tab-bar button.active .tab-step,
+  .score-ring,
+  .gen-track i {
+    animation: none !important;
+  }
+
+  .login-metrics div,
+  .login-card,
+  .sheet,
+  .stat-card strong,
+  .flow-rail li,
+  .analysis-panel,
+  .writing-panel,
+  .review-panel,
+  .delivery-panel,
+  .detail-grid,
+  .files-panel,
+  .agents-panel,
+  .section-card,
+  .status-fill,
+  .mini-bar div,
+  .modal-mask,
+  .modal {
+    animation: none !important;
+  }
+
+  .primary-button,
+  .ghost-button,
+  .sheet,
+  .stat-card,
+  .panel,
+  .info-card,
+  .tabs,
+  .section-card,
+  .dimension-card,
+  .issue-card,
+  .file-row,
+  .agent-card,
+  .agent-mini,
+  .tab-bar button,
+  .login-metrics div,
+  .login-card {
+    transition: none !important;
+  }
+
+  .primary-button:hover {
+    transform: none;
+  }
+
+  .sheet:hover {
+    transform: none;
   }
 }
