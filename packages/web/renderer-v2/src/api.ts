@@ -116,6 +116,8 @@ export type GenerationJob = {
     errors?: { sectionId: string; heading: string; error: string }[];
     quality?: { sections: number; written: number; blockers: number; issues: number; characters: number };
     issues?: GenerationIssue[];
+    agent?: string;
+    trace?: AgentTraceStep[];
   };
   createdAt: string | null;
   updatedAt: string | null;
@@ -142,25 +144,6 @@ export type AgentTraceStep = {
   action: string;
   args: Record<string, unknown>;
   result?: unknown;
-};
-
-export type AgentRun = {
-  id: string;
-  tenderId: string;
-  kind: string;
-  status: string;
-  progress: number;
-  message: string;
-  payload: Record<string, unknown>;
-  result: {
-    output?: Record<string, unknown>;
-    trace?: AgentTraceStep[];
-    error?: string;
-    issues?: GenerationIssue[];
-    stats?: Record<string, number>;
-  };
-  createdAt: string | null;
-  updatedAt: string | null;
 };
 
 export type Template = {
@@ -421,17 +404,6 @@ export const api = {
     request<QualityReport>(`/tenders/${tenderId}/generation/postprocess`, { method: 'POST' }),
 
   agents: () => request<{ items: AgentSpec[] }>('/agents'),
-  runAgent: (tenderId: string, key: string, payload: Record<string, unknown> = {}) =>
-    request<AgentRun>(`/tenders/${tenderId}/agents/${key}/run`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  agentRun: (jobId: string) => request<AgentRun>(`/agent-runs/${jobId}`),
-  agentRuns: (tenderId: string) =>
-    request<{ active: AgentRun | null; items: AgentRun[] }>(`/tenders/${tenderId}/agent-runs`),
-  agentFacts: (tenderId: string) => request<{ facts: Record<string, unknown> | null }>(`/tenders/${tenderId}/agents/facts`),
-  cancelAgentRun: (jobId: string) =>
-    request<{ ok: boolean }>(`/agent-runs/${jobId}/cancel`, { method: 'POST' }),
   patchSection: (tenderId: string, sectionId: string, payload: { heading?: string; intent?: string; body?: string }) =>
     request<Section>(`/tenders/${tenderId}/sections/${sectionId}`, {
       method: 'PATCH',

@@ -5,8 +5,6 @@ import { UserMenu } from '../components/UserMenu';
 import {
   api,
   type Account,
-  type AgentRun,
-  type AgentSpec,
   type Analysis,
   type BidDocument,
   type Delivery,
@@ -36,25 +34,6 @@ const ROLE_LABEL: Record<string, string> = {
   response: '投标文件',
   template: '模板文件',
   attachment: '参考资料',
-};
-
-const FACT_LABEL: Record<string, string> = {
-  name: '项目名称',
-  code: '项目编号',
-  buyer: '采购人',
-  budget: '预算 / 限价',
-  deadline: '投标截止',
-  bidValidity: '投标有效期',
-  duration: '总工期',
-  deposit: '投标保证金',
-};
-
-const ASSISTANT_LABEL: Record<string, string> = {
-  analyst: '招标解读',
-  outliner: '大纲规划',
-  writer: '标书撰写',
-  reviewer: '评标审核',
-  reviser: '修订',
 };
 
 const SEVERITY_LABEL: Record<string, string> = {
@@ -95,11 +74,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const [targetWords, setTargetWords] = useState(80000);
   const [generationJob, setGenerationJob] = useState<GenerationJob | null>(null);
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
-  const [agentSpecs, setAgentSpecs] = useState<AgentSpec[]>([]);
-  const [agentJob, setAgentJob] = useState<AgentRun | null>(null);
-  const [agentFacts, setAgentFacts] = useState<Record<string, unknown> | null>(null);
-  const [agentIssues, setAgentIssues] = useState<GenerationIssue[]>([]);
-  const [agentTraceOpen, setAgentTraceOpen] = useState(false);
   const [reviewMode, setReviewMode] = useState('mixed');
   const [fixes, setFixes] = useState<Record<string, FixProposal>>({});
   const [fixing, setFixing] = useState('');
@@ -122,8 +96,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         deliveryResult,
         outlineResult,
         generationResult,
-        agentRunsResult,
-        agentFactsResult,
       ] = await Promise.allSettled([
         api.analysis(id),
         api.document(id),
@@ -131,8 +103,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         api.deliveries(id),
         api.outline(id),
         api.generationState(id),
-        api.agentRuns(id),
-        api.agentFacts(id),
       ]);
       setAnalysis(analysisResult.status === 'fulfilled' ? analysisResult.value : null);
       setDocument(documentResult.status === 'fulfilled' ? documentResult.value : null);
@@ -148,13 +118,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         const state = generationResult.value;
         setGenerationJob(state.active || state.items[0] || null);
       }
-      if (agentRunsResult.status === 'fulfilled') {
-        const state = agentRunsResult.value;
-        setAgentJob(state.active || state.items[0] || null);
-      }
-      if (agentFactsResult.status === 'fulfilled') {
-        setAgentFacts(agentFactsResult.value.facts);
-      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '加载失败');
     }
@@ -162,10 +125,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
 
   useEffect(() => {
     load();
-    api
-      .agents()
-      .then((result) => setAgentSpecs(result.items))
-      .catch(() => setAgentSpecs([]));
   }, [id]);
 
   useEffect(() => {
@@ -178,30 +137,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     setDrafts(next);
     setFixes({});
   }, [document]);
-
-  useEffect(() => {
-    if (!agentJob || !['queued', 'running'].includes(agentJob.status)) return;
-    let disposed = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const next = await api.agentRun(agentJob.id);
-        if (disposed) return;
-        setAgentJob(next);
-        const issues = agentIssuesOf(next);
-        if (issues.length) setAgentIssues(issues);
-        if (!['queued', 'running'].includes(next.status)) {
-          window.clearInterval(timer);
-          await load();
-        }
-      } catch {
-        // ignore transient polling errors
-      }
-    }, 1500);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [agentJob?.id, agentJob?.status]);
 
   useEffect(() => {
     if (!generationJob || !['queued', 'running'].includes(generationJob.status)) return;
@@ -355,41 +290,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       await api.cancelGeneration(generationJob.id);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '取消失败');
-    }
-  };
-
-  const agentBusy = ['queued', 'running'].includes(agentJob?.status || '');
-
-  const runAgent = async (spec: AgentSpec) => {
-    if (agentBusy) return;
-    if (spec.key === 'builder' && !window.confirm('正文编制 Agent 会生成所有未完成章节，可能耗时较长，确定继续？')) {
-      return;
-    }
-    if (spec.key === 'fixer' && !agentIssues.length) {
-      setError('请先运行「核对 Agent」，再执行修复');
-      return;
-    }
-    let payload: Record<string, unknown> = {};
-    if (spec.key === 'planner') payload = { targetWords };
-    if (spec.key === 'builder') payload = { mode: 'missing' };
-    if (spec.key === 'fixer') payload = { issues: agentIssues.slice(0, 3) };
-    setError('');
-    if (spec.key === 'auditor') setAgentIssues([]);
-    try {
-      const job = await api.runAgent(id, spec.key, payload);
-      setAgentJob(job);
-      setAgentTraceOpen(true);
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : '启动 Agent 失败');
-    }
-  };
-
-  const cancelAgent = async () => {
-    if (!agentJob) return;
-    try {
-      await api.cancelAgentRun(agentJob.id);
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : '取消 Agent 失败');
     }
   };
 
@@ -717,9 +617,9 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             <div className="analysis-panel">
               {!analysis ? (
                 <div className="empty-panel">
-                  <p className="eyebrow">ANALYSIS</p>
+                  <p className="eyebrow">ANALYSIS · 招标解析 Agent</p>
                   <h3>还没有招标解读</h3>
-                  <p>系统会读取招标文件正文，提炼项目概况、资格条件、评分办法与风险项。</p>
+                  <p>招标解析 Agent 会读取招标文件正文，抽取事实台账，并提炼项目概况、资格条件、评分办法与风险项。</p>
                   <button className="primary-button" onClick={runAnalysis} disabled={!!busy}>
                     {busy === 'analysis' ? '解读中，请稍候…' : '开始招标解读'}
                   </button>
@@ -803,18 +703,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   )}
                 </>
               )}
-              <AgentAssist
-                specs={agentSpecs.filter((spec) => spec.key === 'tender_reader')}
-                job={agentJob}
-                busy={agentBusy}
-                canRun={canWrite && files.length > 0}
-                traceOpen={agentTraceOpen}
-                onRun={runAgent}
-                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
-                onCancel={cancelAgent}
-                hint="可选：先从招标原文抽取项目事实、材料、参数与模板章节，供核对与修复使用。"
-                facts={agentFacts}
-              />
             </div>
           )}
 
@@ -822,9 +710,9 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             <div className="writing-panel">
               {!document ? (
                 <div className="empty-panel">
-                  <p className="eyebrow">DOCUMENT</p>
+                  <p className="eyebrow">DOCUMENT · 生成规划 / 正文编制 Agent</p>
                   <h3>还没有标书大纲</h3>
-                  <p>{analysis ? '解读已完成，可以生成章节结构后逐章编写。' : '请先完成招标解读，再生成标书大纲。'}</p>
+                  <p>{analysis ? '生成规划 Agent 会先识别模板并生成章节结构，再由正文编制 Agent 逐章写作。' : '请先完成招标解读，再生成标书大纲。'}</p>
                   {analysis ? (
                     <button className="primary-button" onClick={buildOutline} disabled={!!busy || !canWrite}>
                       {busy === 'outline' ? '生成中…' : '生成标书大纲'}
@@ -1014,17 +902,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   </div>
                 </>
               )}
-              <AgentAssist
-                specs={agentSpecs.filter((spec) => ['template', 'planner', 'builder'].includes(spec.key))}
-                job={agentJob}
-                busy={agentBusy}
-                canRun={canWrite}
-                traceOpen={agentTraceOpen}
-                onRun={runAgent}
-                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
-                onCancel={cancelAgent}
-                hint="可选：模板 Agent 识别生成模式，规划 Agent 生成大纲，编制 Agent 批量写作。"
-              />
             </div>
           )}
 
@@ -1032,7 +909,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
             <div className="review-panel">
               <div className="panel-head">
                 <div>
-                  <p className="eyebrow">QUALITY REVIEW</p>
+                  <p className="eyebrow">QUALITY REVIEW · 核对 Agent</p>
                   <h2>质量检查</h2>
                 </div>
                 <div className="panel-actions">
@@ -1131,7 +1008,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
 
               {!review && document && (
                 <div className="empty-panel">
-                  <p className="eyebrow">REVIEW</p>
+                  <p className="eyebrow">REVIEW · 核对 / 修复 Agent</p>
                   <h3>还没有执行检查</h3>
                   <p>规则检查覆盖章节完整性、字数与关键响应点，AI 检查模拟评标视角审查响应性。</p>
                   <button className="primary-button" onClick={runReview} disabled={!!busy || !canReview}>
@@ -1139,19 +1016,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   </button>
                 </div>
               )}
-
-              <AgentAssist
-                specs={agentSpecs.filter((spec) => ['auditor', 'fixer'].includes(spec.key))}
-                job={agentJob}
-                busy={agentBusy}
-                canRun={canWrite && !!document}
-                traceOpen={agentTraceOpen}
-                onRun={runAgent}
-                onToggleTrace={() => setAgentTraceOpen((value) => !value)}
-                onCancel={cancelAgent}
-                hint="可选：核对 Agent 按招标事实核对成稿，修复 Agent 按问题改写章节。"
-                issues={agentIssues}
-              />
             </div>
           )}
 
@@ -1212,154 +1076,3 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   );
 }
 
-type AgentAssistProps = {
-  specs: AgentSpec[];
-  job: AgentRun | null;
-  busy: boolean;
-  canRun: boolean;
-  traceOpen: boolean;
-  onRun: (spec: AgentSpec) => void;
-  onToggleTrace: () => void;
-  onCancel: () => void;
-  hint: string;
-  facts?: Record<string, unknown> | null;
-  issues?: GenerationIssue[];
-};
-
-function AgentAssist({
-  specs,
-  job,
-  busy,
-  canRun,
-  traceOpen,
-  onRun,
-  onToggleTrace,
-  onCancel,
-  hint,
-  facts,
-  issues,
-}: AgentAssistProps) {
-  if (!specs.length) return null;
-  const agentKey = job?.payload?.agent as string | undefined;
-  const visible = job && specs.some((spec) => spec.key === agentKey) ? job : null;
-  const factProject = (facts as { project?: Record<string, string> } | null)?.project;
-  return (
-    <div className="agent-assist">
-      <div className="agent-assist-head">
-        <div>
-          <p className="eyebrow">AGENT ASSIST</p>
-          <strong>Agent 辅助</strong>
-          <span>{hint}</span>
-        </div>
-      </div>
-      <div className="agent-assist-grid">
-        {specs.map((spec) => (
-          <article className={`agent-mini ${visible?.payload?.agent === spec.key ? 'active' : ''}`} key={spec.key}>
-            <div>
-              <strong>{spec.name}</strong>
-              <small>
-                {spec.description}
-                {spec.assistant ? `（${ASSISTANT_LABEL[spec.assistant] || spec.assistant}助手）` : ''}
-              </small>
-            </div>
-            <button className="ghost-button small" onClick={() => onRun(spec)} disabled={busy || !canRun}>
-              {busy && visible?.payload?.agent === spec.key ? '运行中…' : '运行'}
-            </button>
-          </article>
-        ))}
-      </div>
-
-      {visible && (
-        <div className={`agent-run ${visible.status}`}>
-          <div className="agent-run-head">
-            <strong>{visible.message}</strong>
-            <span>{visible.progress}%</span>
-          </div>
-          <div className="gen-track">
-            <i style={{ width: `${Math.max(2, visible.progress)}%` }} />
-          </div>
-          <div className="agent-run-foot">
-            <span>{visible.result?.error || visible.status}</span>
-            <div className="agent-run-actions">
-              {(visible.result?.trace?.length ?? 0) > 0 && (
-                <button className="ghost-button small" onClick={onToggleTrace}>
-                  {traceOpen ? '收起轨迹' : `查看轨迹 (${visible.result?.trace?.length})`}
-                </button>
-              )}
-              {['queued', 'running'].includes(visible.status) && (
-                <button className="ghost-button danger small" onClick={onCancel}>
-                  取消
-                </button>
-              )}
-            </div>
-          </div>
-          {traceOpen && (visible.result?.trace?.length ?? 0) > 0 && (
-            <ol className="agent-trace">
-              {visible.result?.trace?.map((step) => (
-                <li key={step.step}>
-                  <span>{String(step.step).padStart(2, '0')}</span>
-                  <div>
-                    <strong>{step.action}</strong>
-                    <p>{step.thought || '—'}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      )}
-
-      {factProject && (
-        <div className="agent-facts">
-          <div className="quality-head">
-            <strong>招标事实台账</strong>
-            <span>由招标解析 Agent 抽取</span>
-          </div>
-          <dl className="facts-grid">
-            {Object.entries(factProject)
-              .filter(([, value]) => value)
-              .map(([key, value]) => (
-                <div key={key}>
-                  <dt>{FACT_LABEL[key] || key}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-          </dl>
-          <div className="facts-chips">
-            <span>材料 {((facts as { materials?: unknown[] }).materials || []).length}</span>
-            <span>参数 {((facts as { parameters?: unknown[] }).parameters || []).length}</span>
-            <span>资格 {((facts as { qualifications?: unknown[] }).qualifications || []).length}</span>
-            <span>承诺 {((facts as { commitments?: unknown[] }).commitments || []).length}</span>
-            <span>模板章节 {(((facts as { template?: { chapters?: unknown[] } }).template || {}).chapters || []).length}</span>
-          </div>
-        </div>
-      )}
-
-      {issues && issues.length > 0 && (
-        <div className="quality-panel">
-          <div className="quality-head">
-            <strong>Agent 核对结果</strong>
-            <span>{issues.length} 项</span>
-          </div>
-          <ul className="quality-list">
-            {issues.slice(0, 12).map((issue, index) => (
-              <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
-                <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
-                <div>
-                  <strong>{issue.heading || '全文'}</strong>
-                  <p>{issue.message}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function agentIssuesOf(run: AgentRun | null): GenerationIssue[] {
-  const output = run?.result?.output as { issues?: GenerationIssue[] } | undefined;
-  const issues = output?.issues || run?.result?.issues || [];
-  return Array.isArray(issues) ? issues : [];
-}
