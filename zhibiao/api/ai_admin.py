@@ -3,10 +3,11 @@ from __future__ import annotations
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zhibiao.capabilities import load_capabilities, normalize_capabilities, save_capabilities
 from zhibiao.database import get_db
 from zhibiao.llm import ChatClient
 from zhibiao.models import Account, AiProvider, Assistant, AuditEvent
@@ -35,6 +36,33 @@ class AssistantPayload(BaseModel):
     temperature: float = Field(default=0.6, ge=0, le=2)
     max_tokens: int = Field(default=4000, ge=64, le=32000)
     enabled: bool = True
+
+
+class OcrCapabilityPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    base_url: str = Field(default="", max_length=255, alias="baseUrl")
+    api_key: str = Field(default="", alias="apiKey")
+    model: str = Field(default="", max_length=80)
+    max_pages: int = Field(default=10, ge=1, le=50, alias="maxPages")
+
+
+class ImageCapabilityPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    base_url: str = Field(default="", max_length=255, alias="baseUrl")
+    api_key: str = Field(default="", alias="apiKey")
+    model: str = Field(default="", max_length=80)
+    size: str = Field(default="1024x1024", max_length=20)
+    max_per_section: int = Field(default=2, ge=0, le=8, alias="maxPerSection")
+    max_per_book: int = Field(default=8, ge=0, le=60, alias="maxPerBook")
+
+
+class CapabilitiesPayload(BaseModel):
+    ocr: OcrCapabilityPayload = Field(default_factory=OcrCapabilityPayload)
+    image: ImageCapabilityPayload = Field(default_factory=ImageCapabilityPayload)
 
 
 def _mask(key: str) -> str:
@@ -72,6 +100,42 @@ def _assistant(row: Assistant) -> dict:
         "maxTokens": row.max_tokens,
         "enabled": row.enabled,
     }
+
+
+def _capability_view(data: dict) -> dict:
+    view = normalize_capabilities(data)
+    for kind in ("ocr", "image"):
+        cfg = dict(view[kind])
+        cfg["apiKeySet"] = bool(cfg.get("apiKey"))
+        cfg["apiKey"] = _mask(cfg.get("apiKey", ""))
+        cfg["ready"] = bool(cfg.get("enabled") and cfg.get("baseUrl"))
+        view[kind] = cfg
+    return view
+
+
+@router.get("/capabilities")
+async def get_capabilities(
+    _: Account = Depends(require_permission("admin.ai")),
+    db: AsyncSession = Depends(get_db),
+):
+    data = await load_capabilities(db)
+    return _capability_view(data)
+
+
+@router.put("/capabilities")
+async def update_capabilities(
+    payload: CapabilitiesPayload,
+    account: Account = Depends(require_permission("admin.ai")),
+    db: AsyncSession = Depends(get_db),
+):
+    current = await load_capabilities(db)
+    values = payload.model_dump(by_alias=True)
+    # 密钥留空表示保持不变，避免前端回填掩码后把真实 Key 覆盖成 ••••
+    for kind in ("ocr", "image"):
+        if not values[kind].get("apiKey"):
+            values[kind]["apiKey"] = current[kind].get("apiKey", "")
+    data = await save_capabilities(db, values, actor=account.username)
+    return _capability_view(data)
 
 
 @router.get("/providers")

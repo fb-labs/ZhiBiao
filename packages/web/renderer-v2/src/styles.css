@@ -1310,6 +1310,45 @@ button {
   gap: 8px;
 }
 
+/* ---------- 能力开关 ---------- */
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+}
+
+.capability-card {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.05), transparent 40%), #fff;
+}
+
+.capability-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.capability-head strong {
+  font-size: 15px;
+}
+
+.capability-desc {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+
+.capability-hint {
+  margin: 14px 0 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--soft);
+}
+
 .assistant-list {
   display: flex;
   flex-direction: column;
@@ -1505,6 +1544,10 @@ button {
 
   .assistant-row {
     grid-template-columns: 1fr auto;
+  }
+
+  .capability-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1834,6 +1877,37 @@ button {
 .section-editor:focus {
   border-color: rgba(99, 102, 241, 0.45);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.section-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.section-images figure {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.section-images img {
+  display: block;
+  max-width: 240px;
+  max-height: 170px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.section-images span {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--soft);
+  text-align: center;
 }
 
 .review-score {
@@ -4716,7 +4790,7 @@ body {
 .login .backdrop {
   pointer-events: auto;
   touch-action: pan-y;
-  cursor: grab;
+  cursor: default;
 }
 
 .login-glow {
@@ -4727,26 +4801,93 @@ body {
   pointer-events: auto;
 }
 
-.login-scene-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 58px;
-  z-index: 2;
-  transform: translateX(-50%);
-  margin: 0;
-  padding: 6px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
+/* 登录页第二行打字效果：每次刷新逐字打一遍，打完即停，并带一个闪烁光标 */
+.login-copy h1 span.typing-line {
+  display: inline-block;
+  white-space: nowrap;
+  color: inherit;
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
 }
 
-@media (max-width: 1020px) {
-  .login-scene-hint {
-    display: none;
+.typing-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.86em;
+  margin-left: 4px;
+  vertical-align: -0.08em;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #c4b5fd, #67e8f9);
+  animation: zb-caret-blink 0.7s step-end infinite;
+}
+
+@keyframes zb-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-caret {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   页面专属三维背景
+   - 模型服务：神经网络核心（ambient-model）
+   - 账号权限：权限护盾（ambient-access）
+   - 项目详情：标书工作面（workspace-scene，随步骤切换动效）
+   ============================================================ */
+.ambient-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.52;
+  transition: opacity 0.3s ease;
+}
+
+.ambient-scene canvas {
+  display: block;
+}
+
+.ambient-access {
+  opacity: 0.44;
+}
+
+.shell {
+  position: relative;
+}
+
+.workspace {
+  position: relative;
+  z-index: 1;
+}
+
+.workspace-scene {
+  opacity: 0.6;
+}
+
+@media (max-width: 720px) {
+  .ambient-scene {
+    opacity: 0.32;
+  }
+
+  .workspace-scene {
+    opacity: 0.42;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-scene,
+  .workspace-scene {
+    opacity: 0.36;
   }
 }

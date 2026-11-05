@@ -338,12 +338,6 @@ export function Backdrop({ dense = false }: Props) {
     const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const hitPoint = new THREE.Vector3();
     let hovered = '';
-    let dragging = false;
-    let dragDistance = 0;
-    let lastPointerX = 0;
-    let lastPointerY = 0;
-    let dragY = 0;
-    let dragX = 0;
     let autoSpin = 0;
 
     const updatePointer = (event: PointerEvent) => {
@@ -357,17 +351,6 @@ export function Backdrop({ dense = false }: Props) {
       ndc.set(px * 2 - 1, -(py * 2 - 1));
       cursorTarget.set(pointer.x * 13, -pointer.y * 7, 2.6);
 
-      if (dragging) {
-        const moveX = event.clientX - lastPointerX;
-        const moveY = event.clientY - lastPointerY;
-        dragDistance += Math.abs(moveX) + Math.abs(moveY);
-        dragY += moveX * 0.006;
-        dragX = Math.max(-0.5, Math.min(0.5, dragX + moveY * 0.005));
-        lastPointerX = event.clientX;
-        lastPointerY = event.clientY;
-        return;
-      }
-
       raycaster.setFromCamera(ndc, camera);
       const hits = raycaster.intersectObjects(stationList, true);
       let found = '';
@@ -380,26 +363,14 @@ export function Backdrop({ dense = false }: Props) {
         }
       }
       hovered = found;
-      container.style.cursor = hovered ? 'pointer' : 'grab';
-    };
-
-    const onPointerDown = (event: PointerEvent) => {
-      dragging = true;
-      dragDistance = 0;
-      lastPointerX = event.clientX;
-      lastPointerY = event.clientY;
-      container.style.cursor = 'grabbing';
+      container.style.cursor = hovered ? 'pointer' : 'default';
     };
 
     type Ripple = { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial; life: number };
     const ripples: Ripple[] = [];
 
-    const onPointerUp = (event: PointerEvent) => {
-      const wasDragging = dragging;
-      dragging = false;
-      container.style.cursor = hovered ? 'pointer' : 'grab';
-      if (!wasDragging || dragDistance > 10 || reduced) return;
-
+    const onPointerDown = (event: PointerEvent) => {
+      if (reduced) return;
       const rect = container.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const px = (event.clientX - rect.left) / rect.width;
@@ -419,19 +390,17 @@ export function Backdrop({ dense = false }: Props) {
     };
 
     const onPointerLeave = () => {
-      dragging = false;
       pointer.active = false;
       hovered = '';
       cursorOrb.visible = false;
       trail.forEach((dot) => {
         dot.visible = false;
       });
-      container.style.cursor = 'grab';
+      container.style.cursor = 'default';
     };
 
     container.addEventListener('pointermove', updatePointer);
     container.addEventListener('pointerdown', onPointerDown);
-    container.addEventListener('pointerup', onPointerUp);
     container.addEventListener('pointerleave', onPointerLeave);
 
     const clock = new THREE.Clock();
@@ -453,8 +422,8 @@ export function Backdrop({ dense = false }: Props) {
 
       if (!reduced) {
         autoSpin += delta * 0.045;
-        group.rotation.y = autoSpin + dragY;
-        group.rotation.x += (dragX - group.rotation.x) * 0.08;
+        group.rotation.y += (autoSpin + pointer.x * 0.16 - group.rotation.y) * 0.08;
+        group.rotation.x += (-pointer.y * 0.1 - group.rotation.x) * 0.06;
         group.position.y = 0.2 + Math.sin(time * 0.55) * 0.08;
 
         core.rotation.y = time * 0.32;
@@ -569,7 +538,6 @@ export function Backdrop({ dense = false }: Props) {
       window.removeEventListener('resize', resize);
       container.removeEventListener('pointermove', updatePointer);
       container.removeEventListener('pointerdown', onPointerDown);
-      container.removeEventListener('pointerup', onPointerUp);
       container.removeEventListener('pointerleave', onPointerLeave);
       ripples.forEach(({ mesh, material }) => {
         mesh.geometry.dispose();

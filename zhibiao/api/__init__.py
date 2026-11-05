@@ -13,6 +13,7 @@ from zhibiao.api import (
     files,
     generation,
     health,
+    images,
     outline,
     reviews,
     stats,
@@ -25,6 +26,7 @@ router.include_router(health.router)
 router.include_router(auth.router)
 router.include_router(tenders.router)
 router.include_router(files.router)
+router.include_router(images.router)
 router.include_router(analysis.router)
 router.include_router(outline.router)
 router.include_router(documents.router)

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AmbientScene } from '../components/AmbientScene';
 import { UserMenu } from '../components/UserMenu';
 import { api, type Account, type AgentSpec, type Assistant, type Provider } from '../api';
 
@@ -19,11 +20,40 @@ const EMPTY_PROVIDER = {
   isDefault: true,
 };
 
+type CapabilityDraft = {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  apiKeySet: boolean;
+  ready: boolean;
+  model: string;
+  maxPages: number;
+  size: string;
+  maxPerSection: number;
+  maxPerBook: number;
+};
+
+const EMPTY_CAPABILITY: CapabilityDraft = {
+  enabled: false,
+  baseUrl: '',
+  apiKey: '',
+  apiKeySet: false,
+  ready: false,
+  model: '',
+  maxPages: 10,
+  size: '1024x1024',
+  maxPerSection: 2,
+  maxPerBook: 8,
+};
+
 export function AiSettingsPage({ account, onLogout }: Props) {
   const navigate = useNavigate();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [agents, setAgents] = useState<AgentSpec[]>([]);
+  const [ocrCap, setOcrCap] = useState<CapabilityDraft>({ ...EMPTY_CAPABILITY });
+  const [imageCap, setImageCap] = useState<CapabilityDraft>({ ...EMPTY_CAPABILITY });
+  const [capBusy, setCapBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -33,14 +63,19 @@ export function AiSettingsPage({ account, onLogout }: Props) {
 
   const load = async () => {
     try {
-      const [p, a, g] = await Promise.all([
+      const [p, a, g, c] = await Promise.all([
         api.providers(),
         api.assistants(),
         api.agents().catch(() => ({ items: [] as AgentSpec[] })),
+        api.capabilities().catch(() => null),
       ]);
       setProviders(p.items);
       setAssistants(a.items);
       setAgents(g.items);
+      if (c) {
+        setOcrCap({ ...EMPTY_CAPABILITY, ...c.ocr, apiKey: '' });
+        setImageCap({ ...EMPTY_CAPABILITY, ...c.image, apiKey: '' });
+      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : '加载失败');
     }
@@ -135,8 +170,43 @@ export function AiSettingsPage({ account, onLogout }: Props) {
     }
   };
 
+  const saveCapabilities = async () => {
+    if (capBusy) return;
+    setCapBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const saved = await api.saveCapabilities({
+        ocr: {
+          enabled: ocrCap.enabled,
+          baseUrl: ocrCap.baseUrl.trim(),
+          apiKey: ocrCap.apiKey,
+          model: ocrCap.model.trim(),
+          maxPages: Math.max(1, Math.min(50, Number(ocrCap.maxPages) || 10)),
+        },
+        image: {
+          enabled: imageCap.enabled,
+          baseUrl: imageCap.baseUrl.trim(),
+          apiKey: imageCap.apiKey,
+          model: imageCap.model.trim(),
+          size: imageCap.size.trim() || '1024x1024',
+          maxPerSection: Math.max(0, Math.min(8, Number(imageCap.maxPerSection) || 0)),
+          maxPerBook: Math.max(0, Math.min(60, Number(imageCap.maxPerBook) || 0)),
+        },
+      });
+      setOcrCap({ ...EMPTY_CAPABILITY, ...saved.ocr, apiKey: '' });
+      setImageCap({ ...EMPTY_CAPABILITY, ...saved.image, apiKey: '' });
+      setNotice('能力开关已保存');
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : '保存失败');
+    } finally {
+      setCapBusy(false);
+    }
+  };
+
   return (
     <div className="shell">
+      <AmbientScene variant="model" />
       <header className="topbar">
         <a className="brand" href="/">
           <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
@@ -192,6 +262,154 @@ export function AiSettingsPage({ account, onLogout }: Props) {
               </div>
             ))}
             {providers.length === 0 && <p className="notice">尚未配置模型服务，先添加一个。</p>}
+          </div>
+        </section>
+
+        <section className="admin-block">
+          <div className="section-head">
+            <div><h2>能力开关</h2><p>默认关闭；开启并保存后才会调用对应接口</p></div>
+            <button className="primary-button" onClick={saveCapabilities} disabled={capBusy}>
+              {capBusy ? '保存中…' : '保存能力设置'}
+            </button>
+          </div>
+          <div className="capability-grid">
+            <div className="capability-card">
+              <div className="capability-head">
+                <div>
+                  <strong>OCR 接口</strong>
+                  <p className="capability-desc">
+                    图片上传时自动识别文字，扫描版 PDF 由招标解析按需识别；关闭时保持原有解析逻辑。
+                  </p>
+                </div>
+                <button
+                  className={`toggle ${ocrCap.enabled ? 'on' : ''}`}
+                  onClick={() => setOcrCap({ ...ocrCap, enabled: !ocrCap.enabled })}
+                >
+                  {ocrCap.enabled ? '已开启' : '默认关闭'}
+                </button>
+              </div>
+              <label className="field">
+                <span>接口地址</span>
+                <input
+                  value={ocrCap.baseUrl}
+                  onChange={(event) => setOcrCap({ ...ocrCap, baseUrl: event.target.value })}
+                  placeholder="https://…/v1"
+                />
+              </label>
+              <div className="field-row">
+                <label className="field">
+                  <span>模型</span>
+                  <input
+                    value={ocrCap.model}
+                    onChange={(event) => setOcrCap({ ...ocrCap, model: event.target.value })}
+                    placeholder="glm-4.5v"
+                  />
+                </label>
+                <label className="field">
+                  <span>API Key {ocrCap.apiKeySet ? '（已配置，留空保持不变）' : ''}</span>
+                  <input
+                    type="password"
+                    value={ocrCap.apiKey}
+                    onChange={(event) => setOcrCap({ ...ocrCap, apiKey: event.target.value })}
+                    placeholder="sk-…"
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span>最多识别页数（PDF）</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={ocrCap.maxPages}
+                  onChange={(event) =>
+                    setOcrCap({ ...ocrCap, maxPages: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <p className="capability-hint">需兼容 OpenAI 协议的 /chat/completions 视觉接口。</p>
+            </div>
+
+            <div className="capability-card">
+              <div className="capability-head">
+                <div>
+                  <strong>标书生图</strong>
+                  <p className="capability-desc">
+                    开启后只为示意图、流程图、架构图类占位框生成插图；证照、合同、截图等扫描件仍保留占位。
+                  </p>
+                </div>
+                <button
+                  className={`toggle ${imageCap.enabled ? 'on' : ''}`}
+                  onClick={() => setImageCap({ ...imageCap, enabled: !imageCap.enabled })}
+                >
+                  {imageCap.enabled ? '已开启' : '默认关闭'}
+                </button>
+              </div>
+              <label className="field">
+                <span>接口地址</span>
+                <input
+                  value={imageCap.baseUrl}
+                  onChange={(event) => setImageCap({ ...imageCap, baseUrl: event.target.value })}
+                  placeholder="https://…/v1"
+                />
+              </label>
+              <div className="field-row">
+                <label className="field">
+                  <span>模型</span>
+                  <input
+                    value={imageCap.model}
+                    onChange={(event) => setImageCap({ ...imageCap, model: event.target.value })}
+                    placeholder="图像生成模型"
+                  />
+                </label>
+                <label className="field">
+                  <span>API Key {imageCap.apiKeySet ? '（已配置，留空保持不变）' : ''}</span>
+                  <input
+                    type="password"
+                    value={imageCap.apiKey}
+                    onChange={(event) => setImageCap({ ...imageCap, apiKey: event.target.value })}
+                    placeholder="sk-…"
+                  />
+                </label>
+              </div>
+              <div className="field-row">
+                <label className="field">
+                  <span>图片尺寸</span>
+                  <input
+                    value={imageCap.size}
+                    onChange={(event) => setImageCap({ ...imageCap, size: event.target.value })}
+                    placeholder="1024x1024"
+                  />
+                </label>
+                <label className="field">
+                  <span>每章最多生成</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="8"
+                    value={imageCap.maxPerSection}
+                    onChange={(event) =>
+                      setImageCap({ ...imageCap, maxPerSection: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span>每本最多生成</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="60"
+                  value={imageCap.maxPerBook}
+                  onChange={(event) =>
+                    setImageCap({ ...imageCap, maxPerBook: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <p className="capability-hint">
+                需兼容 OpenAI 协议的 /images/generations 接口；生成结果随标书导出嵌入 DOCX。
+              </p>
+            </div>
           </div>
         </section>
 

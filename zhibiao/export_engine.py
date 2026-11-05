@@ -16,6 +16,7 @@ _MD_HEAD = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*$")
 _MD_UL = re.compile(r"^[ \t]*[-*][ \t]+(.+)$")
 _MD_OL = re.compile(r"^[ \t]*(\d+[.、)）])[ \t]+(.+)$")
 _MD_HR = re.compile(r"^[ \t]*([-*_][ \t]*){3,}$")
+_MD_IMG = re.compile(r"^[ \t]*!\[([^\]\n]*)\]\(([^)\n]+)\)[ \t]*$")
 _BOLD = re.compile(r"(\*\*[^*]+\*\*)")
 
 
@@ -269,9 +270,11 @@ def _add_table(doc: Any, rows: list[list[str]]) -> None:
     doc.add_paragraph()
 
 
-def _render_body(doc: Any, plan: list[dict]) -> None:
-    from docx.enum.text import WD_BREAK, WD_ALIGN_PARAGRAPH
-    from docx.shared import Pt
+def _render_body(doc: Any, plan: list[dict], images: dict[str, bytes] | None = None) -> None:
+    import io
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+    from docx.shared import Emu, Pt
 
     first = True
     for row in plan:
@@ -293,6 +296,30 @@ def _render_body(doc: Any, plan: list[dict]) -> None:
                 index += 1
                 continue
             if _MD_HR.match(stripped):
+                index += 1
+                continue
+            matched_img = _MD_IMG.match(stripped)
+            if matched_img:
+                image_id = (matched_img.group(2) or "").rstrip("/").split("/")[-1]
+                raw = (images or {}).get(image_id)
+                paragraph = doc.add_paragraph()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                if raw:
+                    try:
+                        sec = doc.sections[-1]
+                        width = Emu(
+                            max(
+                                int(sec.page_width) - int(sec.left_margin) - int(sec.right_margin),
+                                1,
+                            )
+                        )
+                        paragraph.add_run().add_picture(io.BytesIO(raw), width=width)
+                    except Exception:  # noqa: BLE001 - 图片坏了不能拖垮整篇导出
+                        paragraph.add_run("［图片］" + (matched_img.group(1) or ""))
+                else:
+                    paragraph.add_run(
+                        "［图片］" + (matched_img.group(1) or "") + "（图片已不在库中）"
+                    )
                 index += 1
                 continue
             if _MD_TABLE.match(stripped):
@@ -388,7 +415,11 @@ def _build_package(
     for run in footer.runs:
         run.font.size = 9
 
-    _render_body(doc, plan)
+    from zhibiao.images import collect_images
+
+    _render_body(
+        doc, plan, collect_images(str(row.get("body") or "") for row in plan)
+    )
 
     buffer = io.BytesIO()
     try:

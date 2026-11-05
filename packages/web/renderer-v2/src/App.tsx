@@ -19,6 +19,14 @@ export function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  // 登录后固定回到工作台：即使用户是在别的页面被跳到登录页，也统一落到工作台。
+  const signedIn = (next: Account) => {
+    if (window.location.pathname !== '/') {
+      window.history.replaceState({}, '', '/');
+    }
+    setAccount(next);
+  };
+
   const logout = async () => {
     try {
       await api.logout();
@@ -33,7 +41,7 @@ export function App() {
   }
 
   if (!account) {
-    return <LoginPage onLogin={setAccount} />;
+    return <LoginPage onLogin={signedIn} />;
   }
 
   return (

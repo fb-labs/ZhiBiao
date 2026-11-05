@@ -36,6 +36,7 @@ from zhibiao.export_docx import (
     _write_page_footer,
     normalize_theme_fonts,
 )
+from zhibiao.images import collect_images
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +295,7 @@ def _render(
         chinese_top=has_format_outline,
         chapter_numbers=chapter_numbers,
         containers=containers,
-        images={},
+        images=collect_images(row.get("content") for row in rows),
         templates=templates,
         pdf_source=pdf_source,
         pdf_titles=pdf_titles,

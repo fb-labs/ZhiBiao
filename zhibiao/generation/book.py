@@ -13,17 +13,20 @@ from typing import Any, Awaitable, Callable
 
 from sqlalchemy import select
 
+from zhibiao.capabilities import capability_ready, read_capability
 from zhibiao.core.chapter_rules import (
     container_chapter_numbers,
     estimate_word_budgets,
     section_numbers,
     shape_chapters,
 )
+from zhibiao.core.image_slots import has_image_slot
 from zhibiao.corpus import tender_corpus
 from zhibiao.database import session_factory
 from zhibiao.domain import TenderStatus
 from zhibiao.generation import engine
 from zhibiao.generation.quality import run_quality
+from zhibiao.images import fill_image_slots
 from zhibiao.llm import get_chat_client
 from zhibiao.models import Analysis, BidDocument, BidSection, Tender, TenderFile
 
@@ -34,6 +37,47 @@ Progress = Callable[[int, str], Awaitable[None]]
 
 async def _noop(_percent: int, _message: str) -> None:
     return None
+
+
+async def _fill_images(document_id: str, stop: asyncio.Event, progress: Progress) -> int:
+    """标书生图：把正文里的示意图占位框换成图片（能力关闭时直接返回 0）。"""
+    cfg = await read_capability("image")
+    if not capability_ready(cfg):
+        return 0
+    budget = int(cfg.get("maxPerBook") or 0)
+    if budget <= 0:
+        return 0
+    async with session_factory()() as db:
+        rows = (
+            await db.execute(
+                select(BidSection)
+                .where(BidSection.document_id == document_id)
+                .order_by(BidSection.position.asc())
+            )
+        ).scalars().all()
+    await progress(95, "正在为示意图章节生成插图")
+    made = 0
+    for row in rows:
+        if stop.is_set() or budget <= 0:
+            break
+        body = row.body or ""
+        if not has_image_slot(body):
+            continue
+        per = min(int(cfg.get("maxPerSection") or 0), budget)
+        if per <= 0:
+            break
+        new_body, count = await fill_image_slots(body, cfg, per)
+        if not count:
+            continue
+        async with session_factory()() as db:
+            target = await db.get(BidSection, row.id)
+            if target:
+                target.body = new_body
+                await db.commit()
+        made += count
+        budget -= count
+        await progress(95, f"已生成插图 {made} 张")
+    return made
 
 
 async def run_book(
@@ -141,6 +185,7 @@ async def run_book(
             "errors": [],
             "quality": {},
             "issues": [],
+            "images": 0,
         }
 
     shaped = shape_chapters(chapters)
@@ -278,6 +323,8 @@ async def run_book(
                     row.body = body
             await db.commit()
 
+    image_count = await _fill_images(document_id, stop, progress)
+
     failed = len(failed_ids)
     final_errors = [item for item in errors if item.get("sectionId") in failed_ids]
     return {
@@ -287,4 +334,5 @@ async def run_book(
         "errors": final_errors[:20],
         "quality": quality["stats"],
         "issues": (final_issues + quality["issues"])[:40],
+        "images": image_count,
     }

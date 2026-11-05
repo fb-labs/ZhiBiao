@@ -186,7 +186,6 @@ export function HomePage({ account, onLogout }: Props) {
           <div className="section-head">
             <div>
               <h2>投标书</h2>
-              <p>第一张为新增入口，其余按新增时间由近到远排列</p>
             </div>
             <span className="count">{filtered.length} 份</span>
           </div>

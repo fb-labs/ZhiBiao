@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PipelineScene } from '../components/PipelineScene';
+import { WorkspaceScene } from '../components/AmbientScene';
 import { UserMenu } from '../components/UserMenu';
 import {
   api,
@@ -35,6 +35,15 @@ const ROLE_LABEL: Record<string, string> = {
   template: '模板文件',
   attachment: '参考资料',
 };
+
+const IMAGE_MD_RE =
+  /!\[[^\]]*\]\(\/api\/images\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/g;
+
+function insertedImages(text: string): string[] {
+  const ids: string[] = [];
+  for (const match of text.matchAll(IMAGE_MD_RE)) ids.push(match[1]);
+  return ids;
+}
 
 const SEVERITY_LABEL: Record<string, string> = {
   blocker: '阻断',
@@ -469,7 +478,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
 
       <main className="workspace">
         <section className="tender-hero">
-          <PipelineScene dense />
+          <WorkspaceScene step={tab} />
           <div className="hero-copy">
             <p className="eyebrow">{tender?.code || 'TENDER'}</p>
             <h1>{tender?.title || '正在加载…'}</h1>
@@ -891,6 +900,20 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                             rows={top ? 8 : 5}
                             readOnly={active}
                           />
+                          {(() => {
+                            const images = insertedImages(drafts[row.id] ?? row.body);
+                            if (!images.length) return null;
+                            return (
+                              <div className="section-images">
+                                {images.map((imageId) => (
+                                  <figure key={imageId}>
+                                    <img src={`/api/images/${imageId}`} alt="标书插图" loading="lazy" />
+                                    <span>已生成插图</span>
+                                  </figure>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </article>
                       );
                     })}

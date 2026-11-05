@@ -84,6 +84,30 @@ def test_login_and_workflow(client: TestClient):
     assert roles.status_code == 200
     assert {item["code"] for item in roles.json()["items"]} >= {"admin", "editor"}
 
+    capabilities = client.get("/api/admin/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["ocr"]["enabled"] is False
+    assert capabilities.json()["image"]["enabled"] is False
+    assert capabilities.json()["image"]["maxPerBook"] == 8
+    saved = client.put(
+        "/api/admin/capabilities",
+        json={
+            "ocr": {"enabled": True, "baseUrl": "https://example.invalid/v1", "maxPages": 3},
+            "image": {"enabled": True, "baseUrl": "https://example.invalid/v1"},
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["ocr"]["ready"] is True
+    assert saved.json()["image"]["ready"] is True
+    assert saved.json()["ocr"]["apiKeySet"] is False
+    off = client.put(
+        "/api/admin/capabilities",
+        json={"ocr": {"enabled": False}, "image": {"enabled": False}},
+    )
+    assert off.status_code == 200
+    assert off.json()["ocr"]["enabled"] is False
+    assert off.json()["image"]["enabled"] is False
+
     agents = client.get("/api/agents")
     assert agents.status_code == 200
     assert {item["key"] for item in agents.json()["items"]} >= {

@@ -1,6 +1,28 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Backdrop } from '../components/Backdrop';
 import { api, type Account } from '../api';
+
+const TYPING_HEAD = '变成一份';
+const TYPING_ACCENT = '可交付的标书';
+
+/** 刷新页面时逐字打一遍，打完即停；开启「减少动态效果」时直接显示全文。 */
+function useTypewriter(total: number, speed = 80) {
+  const [typed, setTyped] = useState(0);
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setTyped(total);
+      return;
+    }
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index += 1;
+      setTyped(index);
+      if (index >= total) window.clearInterval(timer);
+    }, speed);
+    return () => window.clearInterval(timer);
+  }, [total, speed]);
+  return typed;
+}
 
 type Props = {
   onLogin: (account: Account) => void;
@@ -11,6 +33,13 @@ export function LoginPage({ onLogin }: Props) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const typed = useTypewriter(TYPING_HEAD.length + TYPING_ACCENT.length);
+  const headShown = TYPING_HEAD.slice(0, Math.min(typed, TYPING_HEAD.length));
+  const accentShown =
+    typed > TYPING_HEAD.length
+      ? TYPING_ACCENT.slice(0, typed - TYPING_HEAD.length)
+      : '';
+  const typing = typed < TYPING_HEAD.length + TYPING_ACCENT.length;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -48,7 +77,11 @@ export function LoginPage({ onLogin }: Props) {
           <h1>
             把一份招标文件
             <br />
-            变成一份<span>可交付的标书</span>
+            <span className="typing-line">
+              {headShown}
+              <span>{accentShown}</span>
+              {typing && <i className="typing-caret" aria-hidden="true" />}
+            </span>
           </h1>
           <p className="lead">
             解读、编写、检查、交付在同一条工作线上完成。每个环节都留痕，每一处修改都有依据。
@@ -94,8 +127,6 @@ export function LoginPage({ onLogin }: Props) {
           <p className="login-hint">账号由系统管理员创建，忘记密码请联系管理员重置。</p>
         </form>
       </section>
-
-      <p className="login-scene-hint">拖动旋转 · 点击共鸣</p>
 
       <footer className="login-foot">
         <span>智标 · 投标协作平台</span>

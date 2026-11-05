@@ -2,21 +2,48 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zhibiao.capabilities import capability_ready, read_capability
 from zhibiao.database import get_db
 from zhibiao.domain import FileRole
 from zhibiao.files import extract_text, save_upload
 from zhibiao.models import Account, AuditEvent, Tender, TenderFile
+from zhibiao.ocr import IMAGE_SUFFIXES, ocr_file_text
 from zhibiao.security import require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tenders", tags=["v2-files"])
+
+
+async def _ocr_fallback(path, filename: str, text: str, parse_state: str) -> tuple[str, str]:
+    """图片解析不出文字时按能力开关调用 OCR。
+
+    扫描版 PDF 不在上传时同步识别（整份文件可能几十页，上传请求会长时间挂起）；
+    由招标解析 Agent 的 ocr_file 工具在解读阶段按需识别。
+    """
+    suffix = Path(filename).suffix.lower()
+    if suffix not in IMAGE_SUFFIXES:
+        return text, parse_state
+    if len((text or "").strip()) >= 30:
+        return text, parse_state
+    cfg = await read_capability("ocr")
+    if not capability_ready(cfg):
+        return text, parse_state
+    try:
+        recognized = await ocr_file_text(path, filename, cfg)
+    except Exception as exc:  # noqa: BLE001 - OCR 失败保留原始解析结果
+        logger.warning("OCR 识别失败: %s", exc)
+        return text, parse_state
+    if recognized.strip():
+        return recognized, "ocr"
+    return text, parse_state
 
 
 def _serialize(row: TenderFile, include_text: bool = False) -> dict:
@@ -60,6 +87,10 @@ async def upload_file(
     except Exception as exc:  # noqa: BLE001
         logger.warning("解析文件失败: %s", exc)
         parse_state = "failed"
+
+    text, parse_state = await _ocr_fallback(
+        path, file.filename or path.name, text, parse_state
+    )
 
     record = TenderFile(
         tender_id=tender_id,

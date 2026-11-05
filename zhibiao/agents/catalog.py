@@ -24,6 +24,7 @@ TENDER_READER = AgentSpec(
     description="从招标文件原文抽取项目身份、材料清单、技术参数、资格条件、承诺要求与模板信息，形成事实台账，并生成招标解读报告。",
     system_prompt=f"""工作目标：
 1. 输入参数中已包含 tenderDigest（压缩后的招标要点）。直接据此抽取事实，不要先调用 tender_digest；只有关键条款缺失时才用 search_tender 或 read_tender(limit=6000) 定点补充。
+   若上传的是图片或扫描版 PDF（正文几乎为空），调用 ocr_file 识别文字后再抽取事实。
 2. 只抽取原文明确出现的信息；没有写的字段留空，不得猜测。
 3. 项目名称、项目编号、采购人、预算/最高限价、投标截止、投标有效期、总工期、投标保证金必须尽量抽取，并保留原文口径。
 4. materials 列出招标文件要求提交的全部文件与材料（投标函、授权委托书、开标一览表、报价表、资格证明、保证金回单、电子版等）。
@@ -37,6 +38,7 @@ TENDER_READER = AgentSpec(
 11. 保存成功后调用 finish，返回保存的事实摘要与解读结果。""",
     tools=[
         TOOLS["read_tender"],
+        TOOLS["ocr_file"],
         TOOLS["search_tender"],
         TOOLS["read_analysis"],
         TOOLS["save_facts"],

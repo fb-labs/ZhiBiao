@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -403,6 +404,64 @@ async def write_section(ctx: AgentContext, args: dict) -> dict:
     return {**result, "sectionId": section_id, "__final__": True}
 
 
+async def ocr_file(ctx: AgentContext, args: dict) -> dict:
+    """对上传的图片/扫描 PDF 调用 OCR 接口，返回识别文本。"""
+    from zhibiao.capabilities import capability_ready, read_capability
+    from zhibiao.ocr import ocr_file_text
+
+    file_id = str(args.get("fileId") or "").strip()
+    name = str(args.get("filename") or "").strip()
+    async with session_factory()() as db:
+        row = await db.get(TenderFile, file_id) if file_id else None
+        if row is None:
+            rows = (
+                await db.execute(
+                    select(TenderFile)
+                    .where(TenderFile.tender_id == ctx.tender_id)
+                    .order_by(TenderFile.created_at.desc())
+                )
+            ).scalars().all()
+            row = next((item for item in rows if name and name in item.filename), None)
+            if row is None:
+                from zhibiao.ocr import is_image_file
+
+                row = next(
+                    (
+                        item
+                        for item in rows
+                        if is_image_file(item.filename) or item.filename.lower().endswith(".pdf")
+                    ),
+                    rows[0] if rows else None,
+                )
+        if row is None or row.tender_id != ctx.tender_id:
+            return {"error": "文件不存在"}
+        path = Path(row.stored_path)
+        filename = row.filename
+    cfg = await read_capability("ocr")
+    if not capability_ready(cfg):
+        return {"error": "OCR 接口未开启，请先在模型服务页开启并配置接口地址"}
+    if not path.is_file():
+        return {"error": "文件已不在磁盘上"}
+    try:
+        text = await ocr_file_text(path, filename, cfg)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"OCR 识别失败：{exc}"}
+    if text.strip():
+        # 回写识别结果，后续解读/大纲/正文都能复用，不必重复识别。
+        async with session_factory()() as db:
+            record = await db.get(TenderFile, row.id)
+            if record is not None:
+                record.text_content = text
+                record.parse_state = "ocr"
+                await db.commit()
+    return {
+        "filename": filename,
+        "text": text[:12000],
+        "chars": len(text),
+        "truncated": len(text) > 12000,
+    }
+
+
 async def list_sections(ctx: AgentContext, _args: dict) -> dict:
     async with session_factory()() as db:
         document = await _document(db, ctx.tender_id)
@@ -455,6 +514,9 @@ TOOLS = {
         "tender_digest", "读取压缩后的招标要点（项目身份、资格、材料、参数、承诺、模板线索）", tender_digest
     ),
     "read_tender": ToolSpec("read_tender", "读取招标文件正文片段（args.limit 默认 8000 字符）", read_tender),
+    "ocr_file": ToolSpec(
+        "ocr_file", "对上传的图片/扫描 PDF 调用 OCR 接口识别文字（args: fileId 或 filename）", ocr_file
+    ),
     "search_tender": ToolSpec("search_tender", "按关键词检索招标文件，返回命中行", search_tender),
     "read_analysis": ToolSpec("read_analysis", "读取招标解读结果（维度、评分、实质性要求、风险）", read_analysis),
     "build_analysis": ToolSpec("build_analysis", "生成并保存招标解读报告（总览/维度/评分/要求/风险）", build_analysis),

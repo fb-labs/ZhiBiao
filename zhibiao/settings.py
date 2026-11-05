@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     upload_root: str = "./var/uploads"
     delivery_root: str = "./var/deliveries"
     template_root: str = "./var/templates"
+    image_root: str = "./var/images"
 
     ai_base_url: str = "https://token.sensenova.cn/v1"
     ai_api_key: str = ""
@@ -65,7 +66,13 @@ class Settings(BaseSettings):
         return path if (path / "index.html").is_file() else None
 
     def ensure_dirs(self) -> None:
-        for directory in (self.data_root, self.upload_root, self.delivery_root, self.template_root):
+        for directory in (
+            self.data_root,
+            self.upload_root,
+            self.delivery_root,
+            self.template_root,
+            self.image_root,
+        ):
             self.path(directory).mkdir(parents=True, exist_ok=True)
 
 

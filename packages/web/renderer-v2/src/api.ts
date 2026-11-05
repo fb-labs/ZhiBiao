@@ -118,6 +118,7 @@ export type GenerationJob = {
     issues?: GenerationIssue[];
     agent?: string;
     trace?: AgentTraceStep[];
+    images?: number;
   };
   createdAt: string | null;
   updatedAt: string | null;
@@ -225,6 +226,24 @@ export type Provider = {
   maxTokens: number;
   isActive: boolean;
   isDefault: boolean;
+};
+
+export type Capability = {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  apiKeySet: boolean;
+  model: string;
+  ready: boolean;
+  maxPages?: number;
+  size?: string;
+  maxPerSection?: number;
+  maxPerBook?: number;
+};
+
+export type Capabilities = {
+  ocr: Capability;
+  image: Capability;
 };
 
 export type Assistant = {
@@ -461,6 +480,20 @@ export const api = {
       `/admin/providers/${id}/probe`,
       { method: 'POST' },
     ),
+
+  capabilities: () => request<Capabilities>('/admin/capabilities'),
+  saveCapabilities: (payload: {
+    ocr: { enabled: boolean; baseUrl: string; apiKey: string; model: string; maxPages: number };
+    image: {
+      enabled: boolean;
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+      size: string;
+      maxPerSection: number;
+      maxPerBook: number;
+    };
+  }) => request<Capabilities>('/admin/capabilities', { method: 'PUT', body: JSON.stringify(payload) }),
 
   assistants: () => request<{ items: Assistant[] }>('/admin/assistants'),
   createAssistant: (payload: Record<string, unknown>) =>

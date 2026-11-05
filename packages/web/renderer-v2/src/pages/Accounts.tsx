@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AmbientScene } from '../components/AmbientScene';
 import { UserMenu } from '../components/UserMenu';
 import { api, type Account, type AdminAccount, type RoleInfo } from '../api';
 
@@ -141,6 +142,7 @@ export function AccountsPage({ account, onLogout }: Props) {
 
   return (
     <div className="shell">
+      <AmbientScene variant="access" />
       <header className="topbar">
         <a className="brand" href="/">
           <span className="brand-mark"><img src="/logo-tile.png" alt="智标" /></span>
