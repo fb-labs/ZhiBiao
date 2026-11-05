@@ -73,7 +73,7 @@ def outline_messages(title: str, analysis: dict, total_words: int = 80000) -> li
 实质性要求：{analysis.get('requirements', [])}
 目标总篇幅：约 {total_words} 字
 
-{OUTLINE_SCHEMA.format(total=total_words)}"""
+{OUTLINE_SCHEMA.replace('{total}', str(total_words))}"""
     return [
         {"role": "system", "content": OUTLINE_SYSTEM},
         {"role": "user", "content": user},

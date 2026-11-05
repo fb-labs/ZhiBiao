@@ -15,7 +15,9 @@ FENCE = re.compile(r"^[ \t]{0,3}(```|~~~)")
 def cap_tokens(target_words: int, configured: int = 6000) -> int:
     target = max(300, int(target_words or 0))
     cap_chars = int(target * 1.35)
-    return max(700, min(configured, int(cap_chars / 1.45) + 200))
+    # 商汤 GLM 等推理模型会把 reasoning tokens 计入 max_tokens，
+    # 预算过低会导致正文只输出 1-2 个字；这里保留足够的推理+正文空间。
+    return max(3600, min(configured, int(cap_chars / 1.45) + 200))
 
 
 def _bigrams(text: str) -> set[str]:
