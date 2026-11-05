@@ -95,6 +95,8 @@ export function LoginPage({ onLogin }: Props) {
         </form>
       </section>
 
+      <p className="login-scene-hint">拖动旋转 · 点击共鸣</p>
+
       <footer className="login-foot">
         <span>智标 · 投标协作平台</span>
         <span>AGPL-3.0 · 私有化部署</span>
