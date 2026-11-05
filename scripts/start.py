@@ -52,6 +52,7 @@ def check_dependencies() -> bool:
         ("sqlalchemy", "SQLAlchemy"),
         ("pydantic", "Pydantic"),
         ("openai", "OpenAI SDK"),
+        ("httpx", "httpx"),
         ("bcrypt", "bcrypt"),
         ("docx", "python-docx"),
         ("reportlab", "reportlab"),

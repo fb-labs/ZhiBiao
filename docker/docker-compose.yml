@@ -9,6 +9,9 @@
 # 页面与 API 由同一个容器、同一个端口提供。
 # ============================================================================
 
+# 固定 compose 项目名：数据卷与容器统一为 zhibiao_*，与安装/停止脚本、文档保持一致。
+name: zhibiao
+
 x-api-env: &api-env
   ZHIBIAO_DEBUG: ${ZHIBIAO_DEBUG:-false}
   ZHIBIAO_HOST: 0.0.0.0
