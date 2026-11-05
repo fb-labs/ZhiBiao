@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from zhibiao.export_structure import normalize_export_structure
+from zhibiao.core.document_structure import normalize_export_structure
 from zhibiao.text_hygiene import fix_quote_pairing, hygienic_text
 
 _MD_TABLE = re.compile(r"^[ \t]*\|.*\|[ \t]*$")
