@@ -8,9 +8,11 @@ rem  switching to 65001 halfway makes cmd skip every following line and
 rem  the script silently does nothing (reproduced on Windows 11 zh-CN).
 rem ============================================================
 setlocal
-set "PGBIN=%~dp0.pgsql\extracted\pgsql\bin"
-set "PGDATA=%~dp0.pgsql\data"
-set "PGLOG=%~dp0.pgsql\pg.log"
+rem Scripts live in scripts\, project root is the parent directory
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+set "PGBIN=%ROOT%\.pgsql\extracted\pgsql\bin"
+set "PGDATA=%ROOT%\.pgsql\data"
+set "PGLOG=%ROOT%\.pgsql\pg.log"
 
 if not exist "%PGBIN%\postgres.exe" (
     echo [X] PostgreSQL binaries not found: %PGBIN%

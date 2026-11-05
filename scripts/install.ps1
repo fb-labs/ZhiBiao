@@ -2,11 +2,11 @@
     智标一键安装 / 部署脚本（Windows PowerShell）
 
     常用用法：
-      .\install.ps1                          # 自动判断：Docker 可用则走 Docker，否则本地
-      .\install.ps1 -Mode local              # 强制本地开发
-      .\install.ps1 -Mode docker             # 强制 Docker
-      .\install.ps1 -AiApiKey sk-xxx -Yes    # 非交互并写入模型 Key
-      .\install.ps1 -SkipFrontend -NoStart   # 只准备环境
+      .\scripts\install.ps1                          # 自动判断：Docker 可用则走 Docker，否则本地
+      .\scripts\install.ps1 -Mode local              # 强制本地开发
+      .\scripts\install.ps1 -Mode docker             # 强制 Docker
+      .\scripts\install.ps1 -AiApiKey sk-xxx -Yes    # 非交互并写入模型 Key
+      .\scripts\install.ps1 -SkipFrontend -NoStart   # 只准备环境
 
     页面与 API 由同一个 FastAPI 进程在同一端口提供。
 #>
@@ -30,8 +30,8 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$Root = $PSScriptRoot
-if (-not $Root) { $Root = (Get-Location).Path }
+# 脚本位于 scripts/，项目根目录是它的上一级。
+$Root = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
 try { Set-Location $Root } catch { }
 
 $LogDir = Join-Path $Root 'logs'
@@ -301,7 +301,7 @@ if (-not $AiApiKey -and -not $Yes) {
 }
 
 if ($Mode -eq 'docker') {
-    if (-not (Install-Docker)) { Die 'Docker 方式不可用，可改用：.\install.ps1 -Mode local' }
+    if (-not (Install-Docker)) { Die 'Docker 方式不可用，可改用：.\scripts\install.ps1 -Mode local' }
 } elseif ($Mode -eq 'local') {
     Install-Local
 } else {

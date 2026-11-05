@@ -2,11 +2,11 @@
 # =============================================================================
 # 智标一键安装 / 部署脚本（Linux）
 #
-#   ./install.sh                        # 自动判断：Docker 可用则 Docker，否则本地
-#   ./install.sh --mode docker          # 强制 Docker
-#   ./install.sh --mode local           # 强制本地开发
-#   ./install.sh --ai-api-key sk-xxx --yes
-#   ./install.sh --mode local --skip-frontend --no-start
+#   ./scripts/install.sh                        # 自动判断：Docker 可用则 Docker，否则本地
+#   ./scripts/install.sh --mode docker          # 强制 Docker
+#   ./scripts/install.sh --mode local           # 强制本地开发
+#   ./scripts/install.sh --ai-api-key sk-xxx --yes
+#   ./scripts/install.sh --mode local --skip-frontend --no-start
 # =============================================================================
 set -uo pipefail
 
@@ -48,7 +48,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+# 脚本位于 scripts/，项目根目录是它的上一级。
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"

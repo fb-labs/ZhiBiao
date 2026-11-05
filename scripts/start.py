@@ -12,7 +12,10 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
+# 脚本在 scripts/ 下，运行时把项目根目录加入模块搜索路径，保证能 import zhibiao。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def check_python_version() -> bool:
@@ -98,7 +101,7 @@ def check_database() -> bool:
         print("   可改用 SQLite 快速体验：")
         print("     ZHIBIAO_DB_TYPE=sqlite")
         print("     ZHIBIAO_DATABASE_URL=sqlite+aiosqlite:///./zhibiao.db")
-        print("   或启动本地 PostgreSQL：python start.py 会自动尝试")
+        print("   或启动本地 PostgreSQL：python scripts/start.py 会自动尝试")
         return False
 
     print(f"[OK] 数据库连接成功（{settings.db_type}）")

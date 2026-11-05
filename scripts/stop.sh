@@ -3,11 +3,11 @@
 # 智标（ZhiBiao）停止脚本 —— Linux
 #
 # 用法：
-#   ./stop.sh                         # 停本地模式启动的 API（页面与 API 同端口）
-#   ./stop.sh --api-port 8010         # 指定 API 端口
-#   ./stop.sh --docker                # 停 Docker 容器（compose stop）
-#   ./stop.sh --docker --remove       # 删容器与网络（数据卷保留）
-#   ./stop.sh --docker --remove --volumes  # 连数据卷一起删（等于删库！）
+#   ./scripts/stop.sh                         # 停本地模式启动的 API（页面与 API 同端口）
+#   ./scripts/stop.sh --api-port 8010         # 指定 API 端口
+#   ./scripts/stop.sh --docker                # 停 Docker 容器（compose stop）
+#   ./scripts/stop.sh --docker --remove       # 删容器与网络（数据卷保留）
+#   ./scripts/stop.sh --docker --remove --volumes  # 连数据卷一起删（等于删库！）
 #===============================================================================
 set -uo pipefail
 
@@ -28,7 +28,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+# 脚本位于 scripts/，项目根目录是它的上一级。
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # 按端口找到监听进程并杀掉
 stop_by_port() {

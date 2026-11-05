@@ -2,11 +2,11 @@
     智标（ZhiBiao）停止脚本
 
     用法：
-      .\stop.ps1                     # 停止本地方式二启动的 API（页面与 API 同端口）
-      .\stop.ps1 -WithPg             # 连便携 PostgreSQL 一起停
-      .\stop.ps1 -Docker             # 停止 Docker 方式一（compose stop，容器与数据卷都保留）
-      .\stop.ps1 -Docker -Remove     # 删除容器与网络（数据卷仍保留；加 -Volumes 才会删数据）
-      .\stop.ps1 -Docker -Remove -Volumes   # ⚠️ 连数据卷一起删 = 删库
+      .\scripts\stop.ps1                     # 停止本地方式二启动的 API（页面与 API 同端口）
+      .\scripts\stop.ps1 -WithPg             # 连便携 PostgreSQL 一起停
+      .\scripts\stop.ps1 -Docker             # 停止 Docker 方式一（compose stop，容器与数据卷都保留）
+      .\scripts\stop.ps1 -Docker -Remove     # 删除容器与网络（数据卷仍保留；加 -Volumes 才会删数据）
+      .\scripts\stop.ps1 -Docker -Remove -Volumes   # ⚠️ 连数据卷一起删 = 删库
 #>
 [CmdletBinding()]
 param(
@@ -17,8 +17,8 @@ param(
     [switch]$Volumes
 )
 
-$Root = $PSScriptRoot
-if (-not $Root) { $Root = (Get-Location).Path }
+# 脚本位于 scripts/，项目根目录是它的上一级。
+$Root = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
 try { Set-Location $Root } catch { }
 
 function Ok([string]$t) { Write-Host "    [OK] $t" -ForegroundColor Green }
@@ -66,7 +66,7 @@ Write-Host '  停止本地服务（方式二）' -ForegroundColor Cyan
 Stop-ByPort $ApiPort 'API（uvicorn，含页面）'
 
 if ($WithPg) {
-    $bat = Join-Path $Root 'stop-postgres.bat'
+    $bat = Join-Path $Root 'scripts\stop-postgres.bat'
     if (Test-Path $bat) {
         Info '停止便携 PostgreSQL（stop-postgres.bat）…'
         & cmd.exe /c "`"$bat`""
@@ -78,4 +78,4 @@ if ($WithPg) {
 }
 
 Write-Host ''
-Ok '处理完成（Docker 容器请用：.\stop.ps1 -Docker）'
+Ok '处理完成（Docker 容器请用：.\scripts\stop.ps1 -Docker）'

@@ -132,7 +132,7 @@ packages/web/
 tests/                    后端测试
 docs/screenshots/         README 截图
 docker/                   Dockerfile、compose、入口脚本
-start.py                  本地启动脚本
+scripts/                  安装、启动、停止脚本（install / start / stop）
 var/                      运行时上传与交付文件
 ```
 
@@ -143,6 +143,9 @@ var/                      运行时上传与交付文件
 - Python 3.12+
 - Node.js 20+
 - PostgreSQL 16（也可用 SQLite 快速体验）
+
+安装、启动与停止脚本统一放在 `scripts/`：
+Windows 使用 `.\scripts\install.ps1`、`.\scripts\stop.ps1`，Linux 使用 `./scripts/install.sh`、`./scripts/stop.sh`。
 
 ### 方式一：本地运行
 
@@ -156,10 +159,10 @@ npm install
 npm run build
 cd ..\..
 
-python start.py
+python scripts/start.py
 ```
 
-`start.py` 会检查依赖、尝试启动本地 PostgreSQL、建表、创建初始管理员，然后启动服务。
+`scripts/start.py` 会检查依赖、尝试启动本地 PostgreSQL、建表、创建初始管理员，然后启动服务。
 
 也可手动启动：
 

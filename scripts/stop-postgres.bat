@@ -1,8 +1,10 @@
 @echo off
 rem ASCII only, on purpose - see start-postgres.bat for the reason.
 setlocal
-set "PGBIN=%~dp0.pgsql\extracted\pgsql\bin"
-set "PGDATA=%~dp0.pgsql\data"
+rem Scripts live in scripts\, project root is the parent directory
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+set "PGBIN=%ROOT%\.pgsql\extracted\pgsql\bin"
+set "PGDATA=%ROOT%\.pgsql\data"
 
 if not exist "%PGBIN%\pg_ctl.exe" (
     echo [X] pg_ctl.exe not found: %PGBIN%
