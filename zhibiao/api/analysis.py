@@ -130,15 +130,11 @@ async def current_analysis(db: AsyncSession, tender_id: str) -> Analysis | None:
     ).scalar_one_or_none()
 
 
-@router.post("/{tender_id}/analysis")
-async def run_analysis(
-    tender_id: str,
-    account: Account = Depends(require_permission("analysis.run")),
-    db: AsyncSession = Depends(get_db),
-):
-    tender = await db.get(Tender, tender_id)
-    if not tender:
-        raise HTTPException(status_code=404, detail="项目不存在")
+async def analyze_inline(db: AsyncSession, tender: Tender, actor: str) -> Analysis:
+    """招标解读的确定实现：一件事——调模型出解读并落库。
+
+    Agent 的 build_analysis 工具与端点兜底都调用这里，保证两套入口结果一致。
+    """
     corpus = await tender_corpus(db, tender)
     if len(corpus) < 200:
         raise HTTPException(status_code=400, detail="请先上传可解析的招标文件，正文过短")
@@ -158,16 +154,16 @@ async def run_analysis(
 
     await db.execute(
         update(Analysis)
-        .where(Analysis.tender_id == tender_id, Analysis.is_current.is_(True))
+        .where(Analysis.tender_id == tender.id, Analysis.is_current.is_(True))
         .values(is_current=False)
     )
     latest = await db.scalar(
-        select(Analysis.revision).where(Analysis.tender_id == tender_id).order_by(
+        select(Analysis.revision).where(Analysis.tender_id == tender.id).order_by(
             Analysis.revision.desc()
         )
     )
     analysis = Analysis(
-        tender_id=tender_id,
+        tender_id=tender.id,
         revision=(latest or 0) + 1,
         model=client.model,
         overview=str(payload.get("overview") or "").strip(),
@@ -183,14 +179,46 @@ async def run_analysis(
         tender.status = TenderStatus.ANALYZED
     db.add(
         AuditEvent(
-            actor=account.username,
+            actor=actor,
             action="analysis.run",
             target_type="tender",
-            target_id=tender_id,
+            target_id=tender.id,
             detail={"revision": analysis.revision, "model": client.model},
         )
     )
-    await db.flush()
+    await db.commit()
+    return analysis
+
+
+@router.post("/{tender_id}/analysis")
+async def run_analysis(
+    tender_id: str,
+    account: Account = Depends(require_permission("analysis.run")),
+    db: AsyncSession = Depends(get_db),
+):
+    tender = await db.get(Tender, tender_id)
+    if not tender:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    corpus = await tender_corpus(db, tender)
+    if len(corpus) < 200:
+        raise HTTPException(status_code=400, detail="请先上传可解析的招标文件，正文过短")
+
+    # 这一步的执行者是招标解析 Agent：读原文 → 存事实台账 → 生成解读报告。
+    from zhibiao.agents.steps import run_step_agent
+
+    actor = account.username
+    await run_step_agent(
+        "tender_reader",
+        tender_id=tender_id,
+        task="读取招标原文，抽取项目事实台账，并生成招标解读报告（overview/维度/评分/实质性要求/风险）。",
+        payload={"tenderId": tender_id},
+        account=actor,
+    )
+    db.expire_all()
+    analysis = await current_analysis(db, tender_id)
+    if analysis is None:
+        # Agent 没产出（模型不可用/没调工具）时，回落到同一份实现
+        analysis = await analyze_inline(db, await db.get(Tender, tender_id), actor)
     return serialize(analysis)
 
 

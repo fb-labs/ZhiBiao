@@ -111,7 +111,7 @@ class AgentRunner:
                 f"{spec.name} · 第 {step} 步",
             )
             try:
-                decision = await client.json_chat(messages, max_tokens=3000)
+                decision = await client.json_chat(messages, max_tokens=6000)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("%s 决策失败", spec.name)
                 return {"output": {}, "trace": trace, "error": f"模型调用失败：{exc}"}

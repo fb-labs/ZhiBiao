@@ -174,18 +174,14 @@ async def _load_review(db: AsyncSession, review_id: str) -> tuple[Review, list[R
     return review, list(issues)
 
 
-@router.post("/{tender_id}/reviews")
-async def run_review(
-    tender_id: str,
-    payload: ReviewCreate,
-    account: Account = Depends(require_permission("review.run")),
-    db: AsyncSession = Depends(get_db),
-):
-    if payload.mode not in {ReviewMode.RULE, ReviewMode.AI, ReviewMode.MIXED}:
+async def run_review_inline(db: AsyncSession, tender: Tender, mode: str, actor: str) -> Review:
+    """质量检查的确定实现：规则检查 + AI 评标 + 事实核对，落 Review/Issue。
+
+    核对 Agent 的 save_review 工具与端点兜底都调用这里。
+    """
+    if mode not in {ReviewMode.RULE, ReviewMode.AI, ReviewMode.MIXED}:
         raise HTTPException(status_code=400, detail="非法检查模式")
-    tender = await db.get(Tender, tender_id)
-    if not tender:
-        raise HTTPException(status_code=404, detail="项目不存在")
+    tender_id = tender.id
     document = await document_of(db, tender_id)
     if not document:
         raise HTTPException(status_code=400, detail="请先生成标书大纲")
@@ -204,10 +200,10 @@ async def run_review(
     ai_summary = ""
     ai_verdict = ""
 
-    if payload.mode in {ReviewMode.RULE, ReviewMode.MIXED}:
+    if mode in {ReviewMode.RULE, ReviewMode.MIXED}:
         issues.extend(_rule_checks(tender, list(sections), analysis, full_text))
 
-    if payload.mode in {ReviewMode.AI, ReviewMode.MIXED} and full_text:
+    if mode in {ReviewMode.AI, ReviewMode.MIXED} and full_text:
         client = await get_chat_client(assistant="reviewer")
         try:
             verdict = await client.json_chat(
@@ -263,7 +259,7 @@ async def run_review(
     review = Review(
         tender_id=tender_id,
         document_id=document.id,
-        mode=payload.mode,
+        mode=mode,
         status="complete",
         score=round(score, 1),
         verdict=verdict_label,
@@ -292,14 +288,53 @@ async def run_review(
         tender.status = TenderStatus.REVIEW
     db.add(
         AuditEvent(
-            actor=account.username,
+            actor=actor,
             action="review.run",
             target_type="tender",
             target_id=tender_id,
-            detail={"mode": payload.mode, "issues": len(issues), "score": review.score},
+            detail={"mode": mode, "issues": len(issues), "score": review.score},
         )
     )
-    await db.flush()
+    await db.commit()
+    return review
+
+
+@router.post("/{tender_id}/reviews")
+async def run_review(
+    tender_id: str,
+    payload: ReviewCreate,
+    account: Account = Depends(require_permission("review.run")),
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.mode not in {ReviewMode.RULE, ReviewMode.AI, ReviewMode.MIXED}:
+        raise HTTPException(status_code=400, detail="非法检查模式")
+    tender = await db.get(Tender, tender_id)
+    if not tender:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    document = await document_of(db, tender_id)
+    if not document:
+        raise HTTPException(status_code=400, detail="请先生成标书大纲")
+
+    # 这一步的执行者是核对 Agent：读事实 → 逐项核对 → 落问题清单。
+    from zhibiao.agents.steps import run_step_agent
+
+    actor = account.username
+    await run_step_agent(
+        "auditor",
+        tender_id=tender_id,
+        task="按招标事实核对成稿，输出问题清单并按当前检查模式保存成一次质量检查。",
+        payload={"mode": payload.mode},
+        account=actor,
+    )
+    db.expire_all()
+    review = await db.scalar(
+        select(Review)
+        .where(Review.tender_id == tender_id)
+        .order_by(Review.created_at.desc())
+        .limit(1)
+    )
+    if review is None:
+        review = await run_review_inline(db, await db.get(Tender, tender_id), payload.mode, actor)
     _, rows = await _load_review(db, review.id)
     return serialize_review(review, rows)
 
@@ -361,17 +396,11 @@ async def _section_for(db: AsyncSession, review: Review, issue: ReviewIssue) -> 
     return None
 
 
-@detail_router.post("/{review_id}/issues/{issue_id}/fix")
-async def propose_fix(
-    review_id: str,
-    issue_id: str,
-    _: Account = Depends(require_permission("document.write")),
-    db: AsyncSession = Depends(get_db),
-):
-    review, _ = await _load_review(db, review_id)
-    issue = await db.get(ReviewIssue, issue_id)
-    if not issue or issue.review_id != review_id:
-        raise HTTPException(status_code=404, detail="问题不存在")
+async def propose_fix_inline(db: AsyncSession, review: Review, issue: ReviewIssue) -> FixProposal:
+    """修订建议的确定实现：按问题改一章正文并生成可应用的 FixProposal。
+
+    修复 Agent 的 save_fix 工具与端点兜底都调用这里。
+    """
     section = await _section_for(db, review, issue)
     if not section:
         raise HTTPException(status_code=400, detail="未找到可修改的章节")
@@ -398,17 +427,66 @@ async def propose_fix(
         proposed_text=revised,
     )
     db.add(proposal)
-    await db.flush()
+    await db.commit()
+    return proposal
+
+
+def serialize_proposal(proposal: FixProposal, section: BidSection) -> dict:
     return {
         "id": proposal.id,
-        "issueId": issue.id,
-        "sectionId": section.id,
+        "issueId": proposal.issue_id,
+        "sectionId": proposal.section_id,
         "sectionHeading": section.heading,
         "originalText": proposal.original_text,
         "proposedText": proposal.proposed_text,
-        "applied": False,
+        "applied": proposal.applied,
         "createdAt": proposal.created_at.isoformat() if proposal.created_at else None,
     }
+
+
+@detail_router.post("/{review_id}/issues/{issue_id}/fix")
+async def propose_fix(
+    review_id: str,
+    issue_id: str,
+    account: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    review, _ = await _load_review(db, review_id)
+    issue = await db.get(ReviewIssue, issue_id)
+    if not issue or issue.review_id != review_id:
+        raise HTTPException(status_code=404, detail="问题不存在")
+
+    # 这一步的执行者是修复 Agent：按问题定位章节并改写。
+    from zhibiao.agents.steps import run_step_agent
+
+    actor = account.username
+    await run_step_agent(
+        "fixer",
+        tender_id=review.tender_id,
+        task="针对指定检查问题改写对应章节，生成可应用的修订建议。",
+        payload={
+            "reviewId": review_id,
+            "issueId": issue_id,
+            "finding": issue.finding,
+            "recommendation": issue.recommendation,
+        },
+        account=actor,
+    )
+    db.expire_all()
+    proposal = await db.scalar(
+        select(FixProposal)
+        .where(FixProposal.issue_id == issue_id)
+        .order_by(FixProposal.created_at.desc())
+        .limit(1)
+    )
+    if proposal is None:
+        review, _ = await _load_review(db, review_id)
+        issue = await db.get(ReviewIssue, issue_id)
+        proposal = await propose_fix_inline(db, review, issue)
+    section = await db.get(BidSection, proposal.section_id) if proposal.section_id else None
+    if not section:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return serialize_proposal(proposal, section)
 
 
 @detail_router.post("/{review_id}/issues/{issue_id}/fix/{proposal_id}/apply")

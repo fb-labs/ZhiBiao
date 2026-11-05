@@ -116,18 +116,41 @@ def _plans_from_llm(raw) -> list[SectionPlan]:
     return plans
 
 
-@router.post("/{tender_id}/outline")
-async def build_outline(
-    tender_id: str,
-    payload: OutlineOptions | None = None,
-    account: Account = Depends(require_permission("document.write")),
-    db: AsyncSession = Depends(get_db),
-):
-    options = payload or OutlineOptions()
-    tender = await db.get(Tender, tender_id)
-    if not tender:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    analysis = await current_analysis(db, tender_id)
+async def _load_current(
+    db: AsyncSession, tender_id: str
+) -> tuple[Outline | None, BidDocument | None, list[BidSection]]:
+    outline = await db.scalar(
+        select(Outline)
+        .where(Outline.tender_id == tender_id, Outline.is_current.is_(True))
+        .order_by(Outline.created_at.desc())
+        .limit(1)
+    )
+    document = await _document_of(db, tender_id)
+    sections: list[BidSection] = []
+    if document:
+        sections = list(
+            (
+                await db.execute(
+                    select(BidSection)
+                    .where(BidSection.document_id == document.id)
+                    .order_by(BidSection.position.asc())
+                )
+            ).scalars().all()
+        )
+    return outline, document, sections
+
+
+async def build_outline_inline(
+    db: AsyncSession,
+    tender: Tender,
+    options: OutlineOptions,
+    actor: str,
+) -> dict:
+    """大纲的确定实现：模板识别 → 章节规划 → 评分对齐 → 落库。
+
+    规划 Agent 的 save_outline 工具与端点兜底都调用这里。
+    """
+    analysis = await current_analysis(db, tender.id)
     mode = options.mode if options.mode in {"score", "standard", "tender"} else "score"
     if mode == "score" and not analysis:
         raise HTTPException(status_code=400, detail="请先完成招标解读")
@@ -168,9 +191,9 @@ async def build_outline(
     if not plans:
         raise HTTPException(status_code=502, detail="未能生成章节结构")
 
-    document = await _document_of(db, tender_id)
+    document = await _document_of(db, tender.id)
     if not document:
-        document = BidDocument(tender_id=tender_id, title=f"{tender.title} 投标文件", status="draft")
+        document = BidDocument(tender_id=tender.id, title=f"{tender.title} 投标文件", status="draft")
         db.add(document)
         await db.flush()
     else:
@@ -203,16 +226,16 @@ async def build_outline(
 
     await db.execute(
         update(Outline)
-        .where(Outline.tender_id == tender_id, Outline.is_current.is_(True))
+        .where(Outline.tender_id == tender.id, Outline.is_current.is_(True))
         .values(is_current=False)
     )
     latest = await db.scalar(
         select(Outline.revision)
-        .where(Outline.tender_id == tender_id)
+        .where(Outline.tender_id == tender.id)
         .order_by(Outline.revision.desc())
     )
     outline = Outline(
-        tender_id=tender_id,
+        tender_id=tender.id,
         revision=(latest or 0) + 1,
         sections={
             "mode": mode,
@@ -227,10 +250,10 @@ async def build_outline(
         tender.status = TenderStatus.OUTLINED
     db.add(
         AuditEvent(
-            actor=account.username,
+            actor=actor,
             action="outline.build",
             target_type="tender",
-            target_id=tender_id,
+            target_id=tender.id,
             detail={
                 "revision": outline.revision,
                 "mode": mode,
@@ -249,6 +272,43 @@ async def build_outline(
         )
     ).scalars().all()
     return serialize_outline(outline, document, list(sections))
+
+
+@router.post("/{tender_id}/outline")
+async def build_outline(
+    tender_id: str,
+    payload: OutlineOptions | None = None,
+    account: Account = Depends(require_permission("document.write")),
+    db: AsyncSession = Depends(get_db),
+):
+    options = payload or OutlineOptions()
+    tender = await db.get(Tender, tender_id)
+    if not tender:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    analysis = await current_analysis(db, tender_id)
+    if options.mode == "score" and not analysis:
+        raise HTTPException(status_code=400, detail="请先完成招标解读")
+
+    # 这一步的执行者是生成规划 Agent：识模板 → 选模式 → 生成大纲。
+    from zhibiao.agents.steps import run_step_agent
+
+    actor = account.username
+    await run_step_agent(
+        "planner",
+        tender_id=tender_id,
+        task="判断生成模式、抽取模板章节并生成可写作的大纲，然后保存到系统。",
+        payload={
+            "mode": options.mode,
+            "targetWords": options.targetWords,
+            "templateId": options.templateId,
+        },
+        account=actor,
+    )
+    db.expire_all()
+    outline, document, sections = await _load_current(db, tender_id)
+    if not document or not sections:
+        return await build_outline_inline(db, await db.get(Tender, tender_id), options, actor)
+    return serialize_outline(outline, document, sections)
 
 
 @router.get("/{tender_id}/outline")

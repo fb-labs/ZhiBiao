@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,15 +9,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zhibiao.api.analysis import current_analysis
 from zhibiao.database import get_db, session_factory
-from zhibiao.domain import TenderStatus
-from zhibiao.generation.writer import finalize, stream_body
-from zhibiao.llm import get_chat_client
 from zhibiao.models import Account, BidDocument, BidSection, Tender
 from zhibiao.security import require_permission
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tenders", tags=["v2-documents"])
 
@@ -206,45 +199,34 @@ async def generate_section(
     if not tender or not document or not section or section.document_id != document.id:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    analysis = await current_analysis(db, tender_id)
-    sections = (
-        await db.execute(
-            select(BidSection)
-            .where(BidSection.document_id == document.id)
-            .order_by(BidSection.position.asc())
-        )
-    ).scalars().all()
+    # 单章重写同样由正文编制 Agent 执行，和批量生成共用 run_book 的同一套口径。
+    from zhibiao.agents.catalog import SECTION_WRITER
+    from zhibiao.agents.steps import run_step_agent
+    from zhibiao.generation.book import run_book
+
+    outcome = await run_step_agent(
+        "section_writer",
+        tender_id=tender_id,
+        task="重写指定章节，保持与批量生成一致的事实口径、跨章去重与质检。",
+        payload={"sectionId": section_id},
+        account=account.username,
+        spec=SECTION_WRITER,
+    )
+    result = dict(outcome.get("output") or {})
+    if outcome.get("error") or "generated" not in result:
+        result = await run_book(tender_id=tender_id, section_ids=[section_id], mode="all")
+
+    async with session_factory()() as session:
+        row = await session.get(BidSection, section_id)
+    section_payload = serialize_section(row) if row else {"id": section_id, "body": ""}
+    body = str(section_payload.get("body") or "")
 
     async def event_stream() -> AsyncIterator[str]:
-        chunks: list[str] = []
-        try:
-            client = await get_chat_client(assistant="writer")
-            async for delta in stream_body(client, tender, analysis, section, list(sections)):
-                chunks.append(delta)
-                yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("章节生成失败: %s", exc)
-            yield f"data: {json.dumps({'error': f'模型调用失败: {exc}'}, ensure_ascii=False)}\n\n"
-            return
-
-        body = finalize("".join(chunks), section.heading, section.target_words)
-        if not body:
+        if not body.strip():
             yield f"data: {json.dumps({'error': '模型未返回内容'}, ensure_ascii=False)}\n\n"
             return
-        async with session_factory()() as session:
-            row = await session.get(BidSection, section_id)
-            tender_row = await session.get(Tender, tender_id)
-            if row and row.body != body:
-                row.body = body
-                row.status = "written"
-            if tender_row and tender_row.status in {
-                TenderStatus.OUTLINED,
-                TenderStatus.DRAFTING,
-            }:
-                tender_row.status = TenderStatus.DRAFTING
-            await session.commit()
-            payload = serialize_section(row) if row else {"id": section_id, "body": body}
-        yield f"data: {json.dumps({'done': True, 'section': payload}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'delta': body}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'section': section_payload}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),

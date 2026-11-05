@@ -21,7 +21,7 @@ FACT_SCHEMA = """{
 TENDER_READER = AgentSpec(
     key="tender_reader",
     name="招标解析 Agent",
-    description="从招标文件原文抽取项目身份、材料清单、技术参数、资格条件、承诺要求与模板信息，形成可复核的事实台账。",
+    description="从招标文件原文抽取项目身份、材料清单、技术参数、资格条件、承诺要求与模板信息，形成事实台账，并生成招标解读报告。",
     system_prompt=f"""工作目标：
 1. 输入参数中已包含 tenderDigest（压缩后的招标要点）。直接据此抽取事实，不要先调用 tender_digest；只有关键条款缺失时才用 search_tender 或 read_tender(limit=6000) 定点补充。
 2. 只抽取原文明确出现的信息；没有写的字段留空，不得猜测。
@@ -33,15 +33,17 @@ TENDER_READER = AgentSpec(
 8. manualChecklist 写下无法自动核对的签字、盖章、封装、原件携带等事项。
 9. 调用 save_facts 保存事实，facts 参数必须严格符合下面结构：
 {FACT_SCHEMA}
-10. 保存成功后调用 finish，返回保存的事实摘要。""",
+10. 再调用 build_analysis 生成招标解读报告（页面上的项目总览、维度、评分办法、实质性要求、风险提示都来自它）。
+11. 保存成功后调用 finish，返回保存的事实摘要与解读结果。""",
     tools=[
         TOOLS["read_tender"],
         TOOLS["search_tender"],
         TOOLS["read_analysis"],
         TOOLS["save_facts"],
         TOOLS["read_facts"],
+        TOOLS["build_analysis"],
     ],
-    max_steps=8,
+    max_steps=10,
     assistant_key="analyst",
 )
 
@@ -53,7 +55,7 @@ PLANNER = AgentSpec(
     system_prompt="""工作目标：
 1. 先 read_facts；若没有事实，先提示需要运行招标解析 Agent。
 2. 调用 detect_mode 判断生成模式；调用 extract_template 获取模板章节。
-3. 根据模式调用 build_outline：mode 传 generic/docx_template/pdf_template，targetWords 使用输入参数（默认 80000）。
+3. 调用 save_outline 生成并保存大纲：mode 传 generic/docx_template/pdf_template，targetWords 使用输入参数（默认 80000）。
 4. 大纲必须覆盖评分项、资格响应、商务响应、技术方案、服务保障与报价；模板模式要覆盖模板章节。
 5. 完成后 finish，返回 mode、sections 数量、targetWords 与说明。
 不得编造章节或事实。""",
@@ -61,7 +63,7 @@ PLANNER = AgentSpec(
         TOOLS["read_facts"],
         TOOLS["detect_mode"],
         TOOLS["extract_template"],
-        TOOLS["build_outline"],
+        TOOLS["save_outline"],
         TOOLS["list_sections"],
     ],
     max_steps=6,
@@ -75,17 +77,17 @@ BUILDER = AgentSpec(
     description="按大纲与招标事实组织正文生成，调用现有生成引擎逐章写作，并在完成后做一次生成后检查。",
     system_prompt="""工作目标：
 1. 先 read_facts 与 list_sections，确认大纲与事实是否就绪。
-2. 如果没有章节，先 detect_mode 并 build_outline。
-3. 调用 generate_missing：输入 mode 使用 payload.mode（missing/retry/all，默认 missing）。
-4. 生成后调用 audit_document，记录问题数量。
-5. finish，返回 generated/failed/quality/issues 摘要。
+2. 如果没有章节，先 detect_mode 并 save_outline。
+3. 调用 write_book 写作：args.mode 使用 payload.mode（missing/retry/all，默认 missing）。
+4. write_book 会返回 generated/failed/quality/issues 摘要，不要重复调用。
+5. finish，返回生成摘要。
 不得跳过事实核对，不得编造生成结果。""",
     tools=[
         TOOLS["read_facts"],
         TOOLS["detect_mode"],
-        TOOLS["build_outline"],
+        TOOLS["save_outline"],
         TOOLS["list_sections"],
-        TOOLS["generate_missing"],
+        TOOLS["write_book"],
         TOOLS["audit_document"],
     ],
     max_steps=6,
@@ -100,11 +102,12 @@ AUDITOR = AgentSpec(
     system_prompt="""工作目标：
 1. read_facts；若没有事实，提示先运行招标解析 Agent。
 2. 调用 audit_document 执行逐项核对。
-3. 对阻断级、严重级、主要级问题逐条整理；不要重复合并不同章节的问题。
-4. finish，返回 issues、stats 与一句总体结论。
+3. 调用 save_review 把本次核对按输入参数 mode（rule/ai/mixed）保存成一次质量检查，供页面展示与修复使用。
+4. 对阻断级、严重级、主要级问题逐条整理；不要重复合并不同章节的问题。
+5. finish，返回 issues、stats 与一句总体结论。
 只报告能从成稿和招标事实中核实的问题；签字、盖章、封装、原件等放入人工核对。""",
-    tools=[TOOLS["read_facts"], TOOLS["list_sections"], TOOLS["audit_document"]],
-    max_steps=4,
+    tools=[TOOLS["read_facts"], TOOLS["list_sections"], TOOLS["audit_document"], TOOLS["save_review"]],
+    max_steps=6,
     assistant_key="reviewer",
 )
 
@@ -112,22 +115,20 @@ AUDITOR = AgentSpec(
 FIXER = AgentSpec(
     key="fixer",
     name="修复 Agent",
-    description="针对核对问题定位章节、改写正文，并在修改后重新核对。",
+    description="针对指定检查问题定位章节、改写正文并生成可应用的修订建议。",
     system_prompt="""工作目标：
 1. read_facts 与 list_sections。
-2. 输入参数 issues 是待修复问题列表；按严重程度优先处理，最多修改 3 个章节。
-3. 对每个问题调用 fix_section，传入 sectionId、finding、recommendation。
-4. 修改完成后调用 audit_document 复查。
-5. finish，返回 modified 章节与 remaining issues 数量。
+2. 输入参数给出 reviewId、issueId 与 finding/recommendation。
+3. 调用 save_fix 针对该问题改写对应章节，生成可应用修订建议（不要直接覆盖正文）。
+4. 完成后 finish，返回修改的章节与建议编号。
 不得改写与问题无关的内容，不得引入新的资质、业绩或参数。""",
     tools=[
         TOOLS["read_facts"],
         TOOLS["list_sections"],
         TOOLS["read_section"],
-        TOOLS["fix_section"],
-        TOOLS["audit_document"],
+        TOOLS["save_fix"],
     ],
-    max_steps=8,
+    max_steps=6,
     assistant_key="reviser",
 )
 
@@ -152,3 +153,34 @@ AGENTS: dict[str, AgentSpec] = {
     agent.key: agent
     for agent in (TENDER_READER, PLANNER, BUILDER, AUDITOR, FIXER, TEMPLATE_AGENT)
 }
+
+
+# 生成任务内部的执行者：只暴露 write_book，避免长任务里多跑无关工具；
+# 不进 AGENTS，管理页不额外列一个 Agent。
+BOOK_WRITER = AgentSpec(
+    key="book_writer",
+    name="正文编制 Agent",
+    description="按已确定的大纲逐节写作，保留逐章进度、失败重试与全书后处理。",
+    system_prompt="""工作目标：
+1. 调用 write_book 一次，args.mode 取输入参数 mode（missing/retry/all）。
+2. write_book 返回 generated/failed/quality/issues 后立即 finish，不要重复调用。
+不得编造生成结果。""",
+    tools=[TOOLS["write_book"]],
+    max_steps=3,
+    assistant_key="writer",
+)
+
+
+# 单章重写的执行者：和批量生成共用 run_book，避免出现第二套写作口径。
+SECTION_WRITER = AgentSpec(
+    key="section_writer",
+    name="正文编制 Agent",
+    description="按大纲与招标事实重写指定章节，命令口径、去重与质检与批量生成一致。",
+    system_prompt="""工作目标：
+1. 调用 write_section 一次，args.sectionId 取输入参数 sectionId。
+2. write_section 返回 generated/failed 后立即 finish，不要重复调用。
+不得编造生成结果。""",
+    tools=[TOOLS["write_section"]],
+    max_steps=2,
+    assistant_key="writer",
+)
