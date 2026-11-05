@@ -10,7 +10,7 @@ from zhibiao.agents.base import AgentContext, ToolSpec
 from zhibiao.agents.facts import assign_facts, load_facts, normalize_facts
 from zhibiao.corpus import tender_corpus
 from zhibiao.database import session_factory
-from zhibiao.generation.outline import build_outline as build_plan
+from zhibiao.generation.outline import tender_plan
 from zhibiao.models import (
     Analysis,
     BidDocument,
@@ -198,12 +198,12 @@ async def detect_mode(ctx: AgentContext, _args: dict) -> dict:
         ).scalars().all()
         facts = load_facts(tender)
         corpus = await tender_corpus(db, tender, limit=160000)
-    text_plans, text_note = build_plan("tender", corpus)
+    text_plans = tender_plan(corpus)
     template_docx = [row for row in rows if row.role == "template" and row.filename.lower().endswith(".docx")]
     template_pdf = [row for row in rows if row.role == "template" and row.filename.lower().endswith(".pdf")]
     if len(text_plans) >= 3:
         mode = "text_template"
-        reason = f"{text_note}（{sum(1 for p in text_plans if p.level == 1)} 个一级章）"
+        reason = f"按招标文件投标文件格式章生成（{sum(1 for p in text_plans if p.level == 1)} 个一级章）"
     elif template_docx or any(row.filename.lower().endswith(".docx") for row in rows):
         mode = "docx_template"
         reason = "检测到 DOCX 格式模板/招标文件，按 Word 模板结构生成"
@@ -255,7 +255,7 @@ async def extract_template(ctx: AgentContext, _args: dict) -> dict:
         chapters = list(((facts or {}).get("template") or {}).get("chapters") or [])
         source = "招标解析 Agent 抽取的模板章节"
     else:
-        plans = build_plan("tender", corpus)[0]
+        plans = tender_plan(corpus)
         chapters = [plan.heading for plan in plans]
         source = "招标文件格式章（文本解析）"
     seen: list[str] = []

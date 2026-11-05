@@ -860,14 +860,19 @@ def price_variables(tender_text: str) -> list[str]:
 
     返回值形如 `["响应总报价（大写含税）", "下浮率（%）"]`：
     * 总报价必须出现 —— 评审价就是按这一格（大写含税）算的；
-    * 下浮率是询比/招标的固定响应项，原文没写百分比时按「下浮率（%）」出。
+    * 下浮率/优惠率只在原文确实出现时才出。旧实现不管原文有没有都补一行
+      「下浮率（%）」，实测 1365 万的设备采购招标根本没有下浮率口径，成稿的
+      投标函却多出一行擅自增加的费用变量，评标时会被当成报价口径变更。
     """
     section = _letter_section(tender_text) or {}
     body = _flat(section.get("body") or "")
     source = body or _flat(tender_text)
     labels: list[str] = []
     for found in _PRICE_TOTAL.finditer(source):
-        label = found.group(1) + ("（%s）" % found.group(2) if found.group(2) else "")
+        # 「愿意以人民币（大写）（¥ ）**的**投标总报价（含税）」：捕获到的前四个字
+        # 会把「的」带进来，落进占位标签就成了「的投标总报价（含税）」。
+        head = re.sub(r"^(?:的|其|我方|贵方|本)", "", found.group(1))
+        label = head + ("（%s）" % found.group(2) if found.group(2) else "")
         if label not in labels:
             labels.append(label)
     # 最想要的是「大写含税」那一格：同一份原文里常同时出现「（含税）」「（大写含税）」
@@ -879,8 +884,9 @@ def price_variables(tender_text: str) -> list[str]:
     rates = [label for label in labels if "率" in label]
     if not rates:
         rate_word = _PRICE_RATE.search(source)
-        rates = ["%s（%%）" % (rate_word.group(1) if rate_word else "下浮率")]
-    return [total, rates[0]]
+        if rate_word:
+            rates = ["%s（%%）" % rate_word.group(1)]
+    return [total, *rates[:1]]
 
 
 def _variable_needles(label: str) -> tuple[str, ...]:

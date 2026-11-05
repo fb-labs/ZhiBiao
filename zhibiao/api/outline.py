@@ -17,6 +17,7 @@ from zhibiao.generation.outline import (
     build_outline as build_plan,
     expand_template_scores,
     match_scores,
+    tender_plan,
 )
 from zhibiao.llm import get_chat_client
 from zhibiao.models import Account, AuditEvent, BidDocument, BidSection, Outline, Tender
@@ -158,7 +159,10 @@ async def build_outline_inline(
     # 招标文件里只要写了「投标文件格式 / 投标文件组成及格式」，目录就必须按它来：
     # 顶层章名、顺序、数量完全照抄，不再让模型另起一套 25 章的结构。
     corpus = await tender_corpus(db, tender, limit=160000)
-    template_plans, template_note = build_plan("tender", corpus)
+    # 只有真正从原件格式章抽到目录才算「有模板」：build_plan 抽不到时会回退成
+    # 28 章标准结构，旧代码用 len >= 3 判断，于是把标准 IT 结构也当成原件目录，
+    # 提示语写着「已按原件目录生成」，实际整份大纲都是通用章节。
+    template_plans = tender_plan(corpus)
     has_template = len(template_plans) >= 3
     if has_template and mode in {"score", "standard"}:
         mode = "tender"
