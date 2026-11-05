@@ -81,6 +81,39 @@ def test_tender_outline_skips_document_list_reference():
     assert "商务响应" not in top
 
 
+def test_tender_outline_supports_section_format_list():
+    """「五、投标文件组成及格式 + 第一章…第九章」也要能抽成 9 个一级章。
+
+    core 只认独立的「投标文件格式」章，这类写法会退回旧的按行解析。
+    """
+    corpus = """五、投标文件组成及格式
+第一章 投标函
+第二章 法定代表人身份证明及授权委托书
+第三章 开标一览表
+第四章 资格证明文件
+第五章 商务条款响应与偏差说明
+第六章 技术方案
+第七章 服务保障方案
+第八章 报价文件
+第九章 无重大违法记录声明
+六、需提交的材料
+1. 投标函
+"""
+    plans = tender_plan(corpus)
+    top = [plan.heading for plan in plans if plan.level == 1]
+    assert top == [
+        "投标函",
+        "法定代表人身份证明及授权委托书",
+        "开标一览表",
+        "资格证明文件",
+        "商务条款响应与偏差说明",
+        "技术方案",
+        "服务保障方案",
+        "报价文件",
+        "无重大违法记录声明",
+    ]
+
+
 def test_price_variables_do_not_invent_rate():
     from zhibiao.core.format_subsections import price_variables
 
