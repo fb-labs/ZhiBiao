@@ -194,17 +194,34 @@ def _bigrams(text: str) -> set[str]:
     return {clean[index : index + 2] for index in range(max(0, len(clean) - 1))}
 
 
+# 这些二字词在任何章节/评分项里都会撞上，不能作为「对齐」的依据。
+# 旧实现把评分标准(criteria)和 intent 一起算并接受 1 次重叠，结果「投标函」
+# 同时命中「投标设备整体评价」和「投标人业绩」——只因双方都有「投标」两个字。
+_GENERIC_GRAMS = {
+    "投标", "招标", "文件", "项目", "采购", "内容", "相关", "其他", "以及",
+    "进行", "提供", "说明", "编制", "评价", "能力", "程度",
+}
+
+
 def match_scores(plans: list[SectionPlan], scoring_items: list[dict]) -> None:
     if not scoring_items:
         return
+    parent = ""
     for plan in plans:
-        grams = _bigrams(plan.heading + " " + plan.intent)
+        if plan.level <= 1:
+            parent = plan.heading
+            context = plan.heading
+        else:
+            # 二级章节的标题常常是「技术参数」这种短词，带上父章标题才有语义；
+            # 但**不能用 intent**：它是「逐条响应相关要求」这类模板话术，
+            # 「响应」「要求」会把所有章节都拉到同一个评分项上。
+            context = f"{plan.heading} {parent}"
+        grams = _bigrams(context) - _GENERIC_GRAMS
         ranked = []
         for item in scoring_items:
             name = str(item.get("name") or "")
-            criteria = str(item.get("criteria") or "")
-            score = len(grams & _bigrams(name + " " + criteria))
-            ranked.append((score, name, item))
+            overlap = len(grams & (_bigrams(name) - _GENERIC_GRAMS))
+            ranked.append((overlap, name, item))
         ranked.sort(key=lambda row: row[0], reverse=True)
         matched = [name for score, name, _ in ranked[:2] if score > 0 and name]
         plan.scores = matched

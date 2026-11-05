@@ -2727,6 +2727,186 @@ button {
   color: var(--soft);
 }
 
+/* 生成后检查：挂在左侧目录末尾（「其他资料」下面），不占正文区 */
+.doc-outline-quality {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.doc-outline-quality .quality-head {
+  margin-bottom: 6px;
+}
+
+.doc-outline-quality .quality-list {
+  gap: 6px;
+}
+
+.doc-outline-quality .quality-list li strong {
+  font-size: 11px;
+}
+
+.doc-outline-quality .quality-list li p {
+  font-size: 10.5px;
+}
+
+/* 评分对齐：目录生成后、正文生成前，右侧展示本章对齐的评分项 */
+.doc-score {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.doc-score-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.doc-score-head h3 {
+  margin: 2px 0 0;
+  font-size: 17px;
+}
+
+.doc-score-lead {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--soft);
+  line-height: 1.8;
+}
+
+.doc-score-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(99, 102, 241, 0.07);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.doc-score-summary strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-score-summary strong.ok {
+  color: var(--ok);
+}
+
+.doc-score-summary strong.warn {
+  color: #b45309;
+}
+
+.doc-score-summary strong.bad {
+  color: var(--danger);
+}
+
+.doc-score-gap {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(225, 29, 72, 0.14);
+  background: rgba(225, 29, 72, 0.05);
+}
+
+.doc-score-gap > strong {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.doc-score-gap > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.doc-score-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(225, 29, 72, 0.2);
+  background: #fff;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.doc-score-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.doc-score-table th,
+.doc-score-table td {
+  border: 1px solid var(--line);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-score-table th {
+  background: #f6f7ff;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.doc-score-table tr.missing td {
+  background: rgba(225, 29, 72, 0.04);
+}
+
+.doc-score-table tr.active td {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.doc-score-table tr.active .doc-score-name {
+  color: var(--indigo);
+}
+
+.doc-score-name {
+  font-weight: 600;
+}
+
+.doc-score-points {
+  color: var(--indigo);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-score-chapters {
+  color: var(--muted);
+}
+
+.doc-score-table tr.missing .doc-score-chapters {
+  color: var(--danger);
+}
+
+.doc-score-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 11.5px;
+  color: var(--soft);
+  line-height: 1.7;
+}
+
+.doc-score-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
 @media (max-width: 900px) {
   .doc-workspace {
     grid-template-columns: 1fr;

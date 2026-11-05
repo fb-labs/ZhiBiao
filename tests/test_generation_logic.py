@@ -95,6 +95,24 @@ def test_price_variables_do_not_invent_rate():
     assert price_variables(letter + "\n下浮率（%）：") == ["投标总报价（含税）", "下浮率（%）"]
 
 
+def test_score_matching_ignores_generic_prefix():
+    """「投标函」不能因为都有「投标」就命中设备评价、业绩等评分项。"""
+    plans = [
+        SectionPlan(heading="投标函", level=1),
+        SectionPlan(heading="投标报价一览表", level=1),
+        SectionPlan(heading="类似项目业绩", level=1),
+    ]
+    scores = [
+        {"name": "投标设备整体评价", "points": 23},
+        {"name": "投标人业绩", "points": 12},
+        {"name": "投标报价", "points": 40},
+    ]
+    match_scores(plans, scores)
+    assert plans[0].scores == []
+    assert "投标报价" in plans[1].scores
+    assert "投标人业绩" in plans[2].scores
+
+
 def test_score_item_follows_its_parent():
     """评分项追加章节必须落在父章子章之后，不能挂到最后一个一级章下。"""
     plans = [

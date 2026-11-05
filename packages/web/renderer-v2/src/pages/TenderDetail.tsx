@@ -128,6 +128,8 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const [activeSectionId, setActiveSectionId] = useState('');
   const [generating, setGenerating] = useState('');
   const [saving, setSaving] = useState('');
+  const [manualEdit, setManualEdit] = useState(false);
+  const [sectionScores, setSectionScores] = useState<Record<string, string[]>>({});
   const [outlineInfo, setOutlineInfo] = useState<{ mode?: string; note?: string; targetWords?: number } | null>(null);
   const [outlineMode, setOutlineMode] = useState('score');
   const [targetWords, setTargetWords] = useState(80000);
@@ -172,6 +174,9 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         setOutlineInfo({ mode: info.mode, note: info.note, targetWords: info.targetWords });
         if (info.mode) setOutlineMode(info.mode);
         if (info.targetWords) setTargetWords(info.targetWords);
+        const nextScores: Record<string, string[]> = {};
+        for (const row of info.sections) nextScores[row.id] = row.scores || [];
+        setSectionScores(nextScores);
       }
       if (generationResult.status === 'fulfilled') {
         const state = generationResult.value;
@@ -206,6 +211,10 @@ export function TenderDetailPage({ account, onLogout }: Props) {
       setActiveSectionId(document.sections[0]?.id || '');
     }
   }, [document, activeSectionId]);
+
+  useEffect(() => {
+    setManualEdit(false);
+  }, [activeSectionId]);
 
   useEffect(() => {
     if (!generationJob || !['queued', 'running'].includes(generationJob.status)) return;
@@ -530,6 +539,30 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const activeBody = activeSection ? drafts[activeSection.id] ?? activeSection.body : '';
   const activeDirty = activeSection ? activeBody !== activeSection.body : false;
   const activeWords = activeBody.replace(/\s/g, '').length;
+  // 评分对齐：把评分项反向映射到当前目录里的承载章节，正文生成前用于核对覆盖。
+  const scoreCoverage = useMemo(() => {
+    const items = analysis?.scoring?.items || [];
+    const rows = items.map((item) => ({
+      name: item.name,
+      points: Number(item.points) || 0,
+      criteria: item.criteria,
+      chapters: (document?.sections || []).filter((row) =>
+        (sectionScores[row.id] || []).includes(item.name),
+      ),
+    }));
+    const total = rows.reduce((sum, row) => sum + row.points, 0);
+    const covered = rows.reduce((sum, row) => sum + (row.chapters.length ? row.points : 0), 0);
+    return {
+      rows,
+      total,
+      covered,
+      pct: total ? Math.round((covered / total) * 100) : 0,
+      uncovered: rows.filter((row) => !row.chapters.length),
+    };
+  }, [analysis, document, sectionScores]);
+  // 正文还没生成的章节先展示「对齐评分」，让用户确认章节与评分项的关系；
+  // 一旦本章有正文（或正在流式生成），右侧就切回正文编辑器。
+  const showScore = !!activeSection && !activeBody.trim() && !manualEdit && generating !== activeSection.id;
   const canWrite = account.permissions.includes('document.write');
   const canReview = account.permissions.includes('review.run');
   const canDeliver = account.permissions.includes('delivery.run');
@@ -896,30 +929,6 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                     </div>
                   )}
 
-                  {(() => {
-                    const issues: GenerationIssue[] = qualityReport?.issues || generationJob?.result?.issues || [];
-                    if (!issues.length) return null;
-                    return (
-                      <div className="quality-panel">
-                        <div className="quality-head">
-                          <strong>生成后检查</strong>
-                          <span>{issues.length} 项</span>
-                        </div>
-                        <ul className="quality-list">
-                          {issues.slice(0, 12).map((issue, index) => (
-                            <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
-                              <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
-                              <div>
-                                <strong>{issue.heading || '全文'}</strong>
-                                <p>{issue.message}</p>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    );
-                  })()}
-
                   <div className="doc-workspace">
                     <aside className="doc-outline">
                       <div className="doc-outline-head">
@@ -950,6 +959,29 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                           </button>
                         ))}
                       </div>
+                      {(() => {
+                        const issues: GenerationIssue[] = qualityReport?.issues || generationJob?.result?.issues || [];
+                        if (!issues.length) return null;
+                        return (
+                          <div className="quality-panel doc-outline-quality">
+                            <div className="quality-head">
+                              <strong>生成后检查</strong>
+                              <span>{issues.length} 项</span>
+                            </div>
+                            <ul className="quality-list">
+                              {issues.slice(0, 12).map((issue, index) => (
+                                <li className={`sev-${issue.severity}`} key={`${issue.heading}-${index}`}>
+                                  <span className="sev-tag">{SEVERITY_LABEL[issue.severity] || issue.severity}</span>
+                                  <div>
+                                    <strong>{issue.heading || '全文'}</strong>
+                                    <p>{issue.message}</p>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })()}
                       <div className="doc-outline-foot">
                         <button className="ghost-button" onClick={addSection} disabled={!canWrite || batchRunning}>
                           + 新增章节
@@ -1035,26 +1067,122 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                             </div>
                           </header>
                           <div className="doc-stage-body">
-                            <textarea
-                              className="doc-editor"
-                              value={activeBody}
-                              onChange={(event) =>
-                                setDrafts((prev) => ({ ...prev, [activeSection.id]: event.target.value }))
-                              }
-                              placeholder="输入本章正文，支持 Markdown：## 小标题、**加粗**、- 项目符号、| 表格 |、![](图片)"
-                              readOnly={generating === activeSection.id || !canWrite}
-                              spellCheck={false}
-                            />
-                            <div className="doc-edit-foot">
-                              <span>正文按 Markdown 保存，导出 Word 时会转为正式排版。</span>
-                              <span>
-                                {saving === activeSection.id
-                                  ? '保存中…'
-                                  : activeDirty
-                                    ? '有未保存的修改'
-                                    : `约 ${activeWords} 字`}
-                              </span>
-                            </div>
+                            {showScore ? (
+                              <div className="doc-score">
+                                <header className="doc-score-head">
+                                  <div>
+                                    <p className="eyebrow">SCORE ALIGNMENT · 评分对齐</p>
+                                    <h3>目录覆盖 {scoreCoverage.pct}%</h3>
+                                  </div>
+                                  <span className="doc-state">待编写</span>
+                                </header>
+                                <p className="doc-score-lead">
+                                  正文尚未生成。下面按当前目录核对评分项覆盖；生成正文后这里会切换为正文编辑器。
+                                </p>
+                                {scoreCoverage.rows.length ? (
+                                  <>
+                                    <div className="doc-score-summary">
+                                      <strong
+                                        className={
+                                          scoreCoverage.pct >= 80
+                                            ? 'ok'
+                                            : scoreCoverage.pct >= 60
+                                              ? 'warn'
+                                              : 'bad'
+                                        }
+                                      >
+                                        {scoreCoverage.pct}%
+                                      </strong>
+                                      <span>已覆盖 {scoreCoverage.covered} / {scoreCoverage.total} 分</span>
+                                      <span>未覆盖 {scoreCoverage.uncovered.length} 项</span>
+                                    </div>
+                                    {scoreCoverage.uncovered.length > 0 && (
+                                      <div className="doc-score-gap">
+                                        <strong>尚无章节承载</strong>
+                                        <div>
+                                          {scoreCoverage.uncovered.map((row) => (
+                                            <span key={row.name} className="doc-score-pill">
+                                              {row.name} · {row.points} 分
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    <table className="doc-score-table">
+                                      <thead>
+                                        <tr><th>评分项</th><th>分值</th><th>承载章节</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        {scoreCoverage.rows.map((row) => {
+                                          const carrier = !!activeSection && row.chapters.some(
+                                            (item) => item.id === activeSection.id,
+                                          );
+                                          return (
+                                            <tr
+                                              key={row.name}
+                                              className={row.chapters.length ? (carrier ? 'active' : '') : 'missing'}
+                                            >
+                                              <td className="doc-score-name">{row.name}</td>
+                                              <td className="doc-score-points">{row.points} 分</td>
+                                              <td className="doc-score-chapters">
+                                                {row.chapters.length
+                                                  ? `${row.chapters.slice(0, 4).map((item) => item.heading).join('、')}${
+                                                      row.chapters.length > 4 ? ` 等 ${row.chapters.length} 节` : ''
+                                                    }`
+                                                  : '无（建议新增对应章节）'}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </>
+                                ) : (
+                                  <p className="notice">
+                                    还没有评分办法数据，先完成招标解读后再生成大纲。
+                                  </p>
+                                )}
+                                <div className="doc-score-meta">
+                                  <span>当前章节目标 {activeSection.targetWords} 字</span>
+                                  {activeSection.intent && <span>写作要点：{activeSection.intent}</span>}
+                                </div>
+                                <div className="doc-score-actions">
+                                  <button
+                                    className="primary-button"
+                                    onClick={() => generateSection(activeSection)}
+                                    disabled={!!generating || !canWrite || batchRunning}
+                                  >
+                                    AI 编写本章
+                                  </button>
+                                  <button className="ghost-button" onClick={() => setManualEdit(true)} disabled={!canWrite}>
+                                    手动编写
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <textarea
+                                  className="doc-editor"
+                                  value={activeBody}
+                                  onChange={(event) =>
+                                    setDrafts((prev) => ({ ...prev, [activeSection.id]: event.target.value }))
+                                  }
+                                  placeholder="输入本章正文，支持 Markdown：## 小标题、**加粗**、- 项目符号、| 表格 |、![](图片)"
+                                  readOnly={generating === activeSection.id || !canWrite}
+                                  spellCheck={false}
+                                />
+                                <div className="doc-edit-foot">
+                                  <span>正文按 Markdown 保存，导出 Word 时会转为正式排版。</span>
+                                  <span>
+                                    {saving === activeSection.id
+                                      ? '保存中…'
+                                      : activeDirty
+                                        ? '有未保存的修改'
+                                        : `约 ${activeWords} 字`}
+                                  </span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         </>
                       ) : (

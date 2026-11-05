@@ -35,6 +35,7 @@ export type Section = {
   wordCount: number;
   status: string;
   updatedAt: string | null;
+  scores?: string[];
 };
 
 export type BidDocument = {

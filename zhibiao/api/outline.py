@@ -47,6 +47,10 @@ async def _document_of(db: AsyncSession, tender_id: str) -> BidDocument | None:
 
 def serialize_outline(outline: Outline | None, document: BidDocument | None, sections: list[BidSection]) -> dict:
     meta = (outline.sections if outline and isinstance(outline.sections, dict) else {}) or {}
+    # plans 与 sections 是同一循环写出的，按下标一一对应；sectionScores 则为按章节 id
+    # 存储的稳定映射（章节移动后仍然正确）。两种都兼容，优先用 id 映射。
+    plans = meta.get("plans") if isinstance(meta.get("plans"), list) else []
+    score_map = meta.get("sectionScores") if isinstance(meta.get("sectionScores"), dict) else {}
     return {
         "id": outline.id if outline else None,
         "tenderId": outline.tender_id if outline else (document.tender_id if document else ""),
@@ -65,8 +69,16 @@ def serialize_outline(outline: Outline | None, document: BidDocument | None, sec
                 "targetWords": row.target_words,
                 "body": row.body,
                 "status": row.status,
+                "scores": (
+                    score_map.get(row.id)
+                    or (
+                        plans[index].get("scores") or []
+                        if index < len(plans) and isinstance(plans[index], dict)
+                        else []
+                    )
+                ),
             }
-            for row in sections
+            for index, row in enumerate(sections)
         ],
         "createdAt": outline.created_at.isoformat() if outline and outline.created_at else None,
     }
@@ -275,6 +287,14 @@ async def build_outline_inline(
             .order_by(BidSection.position.asc())
         )
     ).scalars().all()
+    # 评分项按 section.id 存一份：章节上移/下移后下标会错位，按 id 取才不会把
+    # 「投标报价」的分数挂到别的章节上。
+    score_map = {
+        row.id: (plans[index].scores if index < len(plans) else [])
+        for index, row in enumerate(sections)
+    }
+    outline.sections = {**(outline.sections or {}), "sectionScores": score_map}
+    await db.flush()
     return serialize_outline(outline, document, list(sections))
 
 
