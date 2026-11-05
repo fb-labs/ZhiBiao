@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -14,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zhibiao.api.documents import document_of
 from zhibiao.database import get_db
 from zhibiao.domain import DeliveryFormat, TenderStatus
-from zhibiao.models import Account, AuditEvent, BidSection, Delivery, Tender
+from zhibiao.export_engine import export_document
+from zhibiao.export_pipeline import export_to_path
+from zhibiao.models import Account, Analysis, AuditEvent, BidSection, Delivery, Tender, TenderFile
 from zhibiao.security import require_permission
 
 logger = logging.getLogger(__name__)
@@ -200,17 +203,69 @@ async def create_delivery(
     suffix = "docx" if payload.format == DeliveryFormat.DOCX else "pdf"
     target = target_dir / f"{tender.code}-{stamp}.{suffix}"
 
+    files = (
+        await db.execute(
+            select(TenderFile)
+            .where(TenderFile.tender_id == tender_id)
+            .order_by(TenderFile.created_at.desc())
+        )
+    ).scalars().all()
+    source = next(
+        (row for row in files if row.role == "template"),
+        next(
+            (
+                row
+                for row in files
+                if row.filename.lower().endswith(
+                    (".docx", ".pdf", ".doc", ".wps", ".rtf", ".txt", ".md")
+                )
+            ),
+            None,
+        ),
+    )
+    source_bytes: bytes | None = None
+    source_name = ""
+    source_text = ""
+    if source and source.stored_path and Path(source.stored_path).is_file():
+        source_bytes = Path(source.stored_path).read_bytes()
+        source_name = source.filename
+        source_text = source.text_content or ""
+    elif source:
+        source_text = source.text_content or ""
+    analysis = (
+        await db.execute(
+            select(Analysis)
+            .where(Analysis.tender_id == tender_id, Analysis.is_current.is_(True))
+            .order_by(Analysis.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    fmt = "docx" if payload.format == DeliveryFormat.DOCX else "pdf"
+    used_fallback = False
     try:
-        if payload.format == DeliveryFormat.DOCX:
-            _write_docx(target, tender, list(sections))
-        else:
-            _write_pdf(target, tender, list(sections))
-    except HTTPException:
-        raise
+        await asyncio.to_thread(
+            export_to_path,
+            target,
+            fmt,
+            tender=tender,
+            sections=list(sections),
+            analysis=analysis,
+            source_bytes=source_bytes,
+            source_name=source_name,
+            source_text=source_text,
+        )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("交付文件生成失败: %s", exc)
-        target.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"生成交付文件失败: {exc}") from exc
+        logger.warning("新版导出链路失败，回退通用导出：%s", exc)
+        used_fallback = True
+        try:
+            export_document(target, fmt, tender, list(sections))
+        except Exception as fallback_exc:  # noqa: BLE001
+            logger.exception("交付文件生成失败: %s", fallback_exc)
+            target.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=500, detail=f"生成交付文件失败: {fallback_exc}"
+            ) from fallback_exc
 
     row = Delivery(
         tender_id=tender_id,
@@ -227,7 +282,11 @@ async def create_delivery(
             action="delivery.create",
             target_type="tender",
             target_id=tender_id,
-            detail={"format": payload.format, "file": target.name},
+            detail={
+                "format": payload.format,
+                "file": target.name,
+                "pipeline": "legacy" if used_fallback else "template",
+            },
         )
     )
     await db.flush()

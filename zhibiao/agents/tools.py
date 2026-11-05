@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from sqlalchemy import delete, select, update
 
@@ -36,6 +35,7 @@ async def _document(db, tender_id: str) -> BidDocument | None:
             select(BidDocument)
             .where(BidDocument.tender_id == tender_id)
             .order_by(BidDocument.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 
@@ -60,6 +60,7 @@ async def _analysis(db, tender_id: str) -> Analysis | None:
             select(Analysis)
             .where(Analysis.tender_id == tender_id, Analysis.is_current.is_(True))
             .order_by(Analysis.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 
@@ -198,9 +199,14 @@ async def detect_mode(ctx: AgentContext, _args: dict) -> dict:
             await db.execute(select(TenderFile).where(TenderFile.tender_id == tender.id))
         ).scalars().all()
         facts = load_facts(tender)
+        corpus = await tender_corpus(db, tender, limit=160000)
+    text_plans, text_note = build_plan("tender", corpus)
     template_docx = [row for row in rows if row.role == "template" and row.filename.lower().endswith(".docx")]
     template_pdf = [row for row in rows if row.role == "template" and row.filename.lower().endswith(".pdf")]
-    if template_docx or any(row.filename.lower().endswith(".docx") for row in rows):
+    if len(text_plans) >= 3:
+        mode = "text_template"
+        reason = f"{text_note}（{sum(1 for p in text_plans if p.level == 1)} 个一级章）"
+    elif template_docx or any(row.filename.lower().endswith(".docx") for row in rows):
         mode = "docx_template"
         reason = "检测到 DOCX 格式模板/招标文件，按 Word 模板结构生成"
     elif template_pdf or any(row.filename.lower().endswith(".pdf") for row in rows):
@@ -265,7 +271,9 @@ async def extract_template(ctx: AgentContext, _args: dict) -> dict:
 async def build_outline(ctx: AgentContext, args: dict) -> dict:
     mode = str(args.get("mode") or "generic")
     target_words = int(args.get("targetWords") or 80000)
-    planned_mode = "tender" if mode in {"docx_template", "pdf_template"} else "standard"
+    planned_mode = (
+        "tender" if mode in {"docx_template", "pdf_template", "text_template"} else "standard"
+    )
     async with session_factory()() as db:
         tender = await _tender(db, ctx)
         if not tender:

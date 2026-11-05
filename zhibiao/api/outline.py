@@ -15,6 +15,7 @@ from zhibiao.generation.outline import (
     SectionPlan,
     assign_targets,
     build_outline as build_plan,
+    expand_template_scores,
     match_scores,
 )
 from zhibiao.llm import get_chat_client
@@ -131,8 +132,16 @@ async def build_outline(
     if mode == "score" and not analysis:
         raise HTTPException(status_code=400, detail="请先完成招标解读")
 
-    if mode in {"standard", "tender"}:
-        corpus = await tender_corpus(db, tender)
+    # 招标文件里只要写了「投标文件格式 / 投标文件组成及格式」，目录就必须按它来：
+    # 顶层章名、顺序、数量完全照抄，不再让模型另起一套 25 章的结构。
+    corpus = await tender_corpus(db, tender, limit=160000)
+    template_plans, template_note = build_plan("tender", corpus)
+    has_template = len(template_plans) >= 3
+    if has_template and mode in {"score", "standard"}:
+        mode = "tender"
+        plans = template_plans
+        note = f"检测到招标文件投标文件格式章，已按原件目录生成（{sum(1 for p in plans if p.level == 1)} 个一级章）"
+    elif mode in {"standard", "tender"}:
         plans, note = build_plan(mode, corpus)
         if options.templateId:
             note += "（未使用指定模板，当前按内置结构生成）"
@@ -152,6 +161,8 @@ async def build_outline(
         note = "按评分项对齐生成，覆盖评分办法与实质性要求"
 
     score_items = ((analysis.scoring or {}).get("items") or []) if analysis else []
+    if mode == "tender":
+        plans = expand_template_scores(plans, score_items)
     match_scores(plans, score_items)
     assign_targets(plans, options.targetWords)
     if not plans:

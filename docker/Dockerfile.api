@@ -57,12 +57,17 @@ RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/deb
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         fonts-wqy-zenhei \
+        fonts-noto-cjk \
+        libreoffice-writer \
         curl \
         tzdata \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
+
+# 宋体/黑体映射到思源，保证 LibreOffice 转 PDF 的字形与 DOCX 一致
+COPY docker/fonts-cjk.conf /etc/fonts/conf.d/99-zhibiao-cjk.conf
 
 WORKDIR /app
 COPY --from=builder /install /usr/local

@@ -147,6 +147,7 @@ async def get_tender(
             select(Analysis)
             .where(Analysis.tender_id == tender_id, Analysis.is_current.is_(True))
             .order_by(Analysis.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     outline = (
@@ -154,6 +155,7 @@ async def get_tender(
             select(Outline)
             .where(Outline.tender_id == tender_id, Outline.is_current.is_(True))
             .order_by(Outline.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     document = (
@@ -161,6 +163,7 @@ async def get_tender(
             select(BidDocument)
             .where(BidDocument.tender_id == tender_id)
             .order_by(BidDocument.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
     section_count = 0
@@ -170,7 +173,7 @@ async def get_tender(
         )
     latest_review = (
         await db.execute(
-            select(Review).where(Review.tender_id == tender_id).order_by(Review.created_at.desc())
+            select(Review).where(Review.tender_id == tender_id).order_by(Review.created_at.desc()).limit(1)
         )
     ).scalar_one_or_none()
 

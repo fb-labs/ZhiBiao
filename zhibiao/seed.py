@@ -22,11 +22,11 @@ from zhibiao.settings import get_settings
 logger = logging.getLogger(__name__)
 
 ASSISTANTS = (
-    ("analyst", "招标解读助手", "提炼资格条件、评分办法与实质性要求", 0.3),
-    ("outliner", "大纲规划助手", "把解读结果编排为可写作的章节结构", 0.4),
-    ("writer", "标书撰写助手", "按章节意图撰写响应正文", 0.6),
-    ("reviewer", "评标审核助手", "以评标视角检查完整性、响应性与合规性", 0.2),
-    ("reviser", "修订助手", "按审查意见重写章节正文", 0.5),
+    ("analyst", "招标解读助手", "提炼资格条件、评分办法与实质性要求", 0.3, 4000),
+    ("outliner", "大纲规划助手", "把解读结果编排为可写作的章节结构", 0.4, 4000),
+    ("writer", "标书撰写助手", "按章节意图撰写响应正文", 0.6, 10000),
+    ("reviewer", "评标审核助手", "以评标视角检查完整性、响应性与合规性", 0.2, 4000),
+    ("reviser", "修订助手", "按审查意见重写章节正文", 0.5, 8000),
 )
 
 DEFAULT_TEMPLATE_CONFIG = {
@@ -95,9 +95,16 @@ async def ensure_bootstrap_admin() -> None:
 
 async def ensure_assistants() -> None:
     async with session_factory()() as db:
-        existing = {row[0] for row in (await db.execute(select(Assistant.key))).all()}
-        for key, label, purpose, temperature in ASSISTANTS:
-            if key in existing:
+        rows = {
+            row.key: row
+            for row in (await db.execute(select(Assistant))).scalars().all()
+        }
+        for key, label, purpose, temperature, tokens in ASSISTANTS:
+            current = rows.get(key)
+            if current is not None:
+                # 只升不降：历史库里 writer/reviser 还是 4000，会直接卡住长篇正文。
+                if current.max_tokens < tokens:
+                    current.max_tokens = tokens
                 continue
             db.add(
                 Assistant(
@@ -105,7 +112,7 @@ async def ensure_assistants() -> None:
                     label=label,
                     purpose=purpose,
                     temperature=temperature,
-                    max_tokens=4000,
+                    max_tokens=tokens,
                     enabled=True,
                     provider_id=None,
                     model="",
@@ -129,7 +136,7 @@ async def ensure_default_provider() -> None:
                 api_key=settings.ai_api_key,
                 model=settings.ai_model,
                 temperature=0.6,
-                max_tokens=4000,
+                max_tokens=10000,
                 is_active=True,
                 is_default=True,
             )

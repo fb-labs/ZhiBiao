@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from zhibiao.generation.prompts import chapter_messages, continue_messages
 from zhibiao.llm import ChatClient
 from zhibiao.models import Analysis, BidSection, Tender
+from zhibiao.text_hygiene import fix_quote_pairing, hygienic_text
 
 END_PUNCT = frozenset("。！？；：.!?;:）)】”\"'…—")
 BAD_TAILS = ("如下", "包括", "其中", "例如", "：", ":", "、", "（", "(", "分别", "首先", "一是")
@@ -149,6 +150,8 @@ def finalize(text: str, heading: str, target_words: int) -> str:
         cut = body[:limit]
         boundary = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"), cut.rfind("\n"))
         body = cut[: boundary + 1] if boundary > limit * 0.7 else cut
+    body, _ = hygienic_text(body)
+    body = fix_quote_pairing(body)
     return body.strip()
 
 

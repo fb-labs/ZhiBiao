@@ -4,11 +4,36 @@ import re
 from dataclasses import dataclass, field
 
 CN_NUM = "一二三四五六七八九十"
-FLOW_TERMS = re.compile(r"开标|评标|授予合同|定标|中标通知|签订合同|质疑|投诉|废标|重新招标|投标人须知")
-FORMAT_HINT = re.compile(r"投标文件(格式|编制|组成|目录)|响应文件(格式|编制|组成)")
+FLOW_TERMS = re.compile(r"评标|授予合同|定标|中标通知|签订合同|质疑|投诉|废标|重新招标|投标人须知")
+FORMAT_HINT = re.compile(
+    r"投标文件(格式|编制|组成|目录|内容)|响应文件(格式|编制|组成|内容)|"
+    r"报价文件格式|格式及要求|文件格式"
+)
 CHAPTER_LINE = re.compile(r"^[ \t]*第([%s\d]{1,3})章[ \t、.．:：]*([^。，,；;]{2,36})" % CN_NUM)
 CN_SECTION = re.compile(r"^[ \t]*([%s]{1,3})[、.．][ \t]*([^0-9。，,；;：:]{2,26})[ \t]*$" % CN_NUM)
 PAREN_SECTION = re.compile(r"^[ \t]*[（(]([%s]{1,3})[）)][ \t]*([^。，,；;：:]{2,26})" % CN_NUM)
+
+# 招标文件只给出「技术方案」「服务保障方案」这种总章时，按评分项/常规交付项展开下级，
+# 顶层章名与顺序仍然完全照抄招标文件，不改名、不增删。
+_TEMPLATE_CHILDREN: dict[str, tuple[str, ...]] = {
+    "技术方案": (
+        "总体架构与技术路线",
+        "功能需求逐条响应",
+        "数据治理与安全设计",
+        "系统集成与接口方案",
+        "实施方案与进度计划",
+    ),
+    "服务保障方案": ("项目团队与职责", "培训方案", "运维与售后服务", "质保期与备件承诺"),
+    "报价文件": ("分项报价表", "报价说明"),
+    "资格证明文件": (
+        "营业执照与主体资格",
+        "软件企业或高新技术企业证书",
+        "同类项目业绩",
+        "财务报告与纳税社保",
+    ),
+}
+_TECH_SCORE = re.compile(r"总体架构|功能需求|数据治理|系统集成|实施方案|技术方案|测试|验收|安全")
+_SERVICE_SCORE = re.compile(r"团队|培训|运维|售后|质保|服务保障")
 
 
 @dataclass
@@ -103,7 +128,11 @@ def _clean_heading(title: str) -> str:
 
 
 def tender_plan(corpus: str) -> list[SectionPlan]:
-    """从招标文件的「投标文件格式」章节抽取骨架，失败时返回空列表。"""
+    """从招标文件的「投标文件格式」章节抽取骨架，失败时返回空列表。
+
+    优先按「第X章」的正式格式清单出顶层章；只有清单不存在时才退回「一、二、三」条目。
+    顶层章名与顺序完全照抄招标文件，不增、不删、不改名。
+    """
     lines = [line.strip() for line in (corpus or "").splitlines()]
     start = -1
     for index, line in enumerate(lines):
@@ -113,29 +142,98 @@ def tender_plan(corpus: str) -> list[SectionPlan]:
     if start < 0:
         return []
 
-    plans: list[SectionPlan] = []
+    chapter_titles: list[str] = []
+    cn_titles: list[str] = []
     seen: set[str] = set()
-    for line in lines[start + 1 : start + 260]:
+    for raw in lines[start + 1 : start + 300]:
+        line = raw.strip()
         if not line or len(line) > 60:
             continue
-        match = CHAPTER_LINE.match(line) or CN_SECTION.match(line) or PAREN_SECTION.match(line)
-        if not match:
+        chapter = CHAPTER_LINE.match(line)
+        if chapter:
+            title = _clean_heading(chapter.group(2))
+            if title and len(title) >= 2 and not FLOW_TERMS.search(title) and title not in seen:
+                seen.add(title)
+                chapter_titles.append(title)
             continue
-        title = _clean_heading(match.group(2))
-        if not title or len(title) < 2 or FLOW_TERMS.search(title):
-            continue
-        if title in seen:
-            continue
-        seen.add(title)
-        plans.append(SectionPlan(heading=title, intent=f"按招标文件要求编写「{title}」。", level=1, weight=1.0))
-        if len(plans) >= 14:
+        # 格式清单结束：遇到下一个一级中文条目（如「六、需提交的材料」）就停止，
+        # 否则材料清单、实质性要求会被误当成投标文件章节。
+        if chapter_titles and CN_SECTION.match(line):
             break
+        section = CN_SECTION.match(line) or PAREN_SECTION.match(line)
+        if section and not chapter_titles:
+            title = _clean_heading(section.group(2))
+            if title and len(title) >= 2 and not FLOW_TERMS.search(title) and title not in seen:
+                seen.add(title)
+                cn_titles.append(title)
 
-    if len(plans) < 3:
+    titles = chapter_titles or cn_titles
+    if len(titles) < 3:
         return []
-    for plan in plans:
-        plan.intent = f"按招标文件规定的格式与内容编写「{plan.heading}」，逐条响应相关要求。"
+
+    plans: list[SectionPlan] = []
+    for title in titles[:20]:
+        plans.append(
+            SectionPlan(
+                heading=title,
+                intent=f"按招标文件规定的格式与内容编写「{title}」，逐条响应相关要求。",
+                level=1,
+                weight=_template_weight(title),
+            )
+        )
+        for child in _TEMPLATE_CHILDREN.get(title, ()):
+            plans.append(
+                SectionPlan(
+                    heading=child,
+                    intent=f"在「{title}」项下编写「{child}」，响应招标文件与评分标准。",
+                    level=2,
+                    weight=_template_weight(title) * 0.9,
+                )
+            )
     return plans
+
+
+def _template_weight(title: str) -> float:
+    return 3.0 if "技术" in title else 2.0 if "服务" in title else 0.8
+
+
+def expand_template_scores(plans: list[SectionPlan], score_items: list[dict]) -> list[SectionPlan]:
+    """把评分项挂到对应的模板章下；模板顶层章名与顺序保持不变。"""
+    if not score_items:
+        return plans
+    result: list[SectionPlan] = []
+    for plan in plans:
+        result.append(plan)
+    tech_parent = next((p for p in plans if p.level == 1 and "技术方案" in p.heading), None)
+    service_parent = next((p for p in plans if p.level == 1 and "服务" in p.heading), None)
+    existing = {plan.heading for plan in plans}
+    for item in score_items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or len(name) > 24 or name in existing:
+            continue
+        parent = None
+        if tech_parent and _TECH_SCORE.search(name):
+            parent = tech_parent
+        elif service_parent and _SERVICE_SCORE.search(name):
+            parent = service_parent
+        if not parent:
+            continue
+        # 「服务保障」「技术方案」这种评分部分名本身不是新章节：它已经有对应的模板章，
+        # 再补一个同名一级章会把招标原件规定的 9 章变成 10 章。
+        if name in parent.heading or parent.heading in name:
+            continue
+        result.append(
+            SectionPlan(
+                heading=name,
+                intent=f"响应评分项「{name}」，覆盖评分标准中的全部要点。",
+                level=2,
+                weight=parent.weight * 0.9,
+            )
+        )
+        existing.add(name)
+    return result
 
 
 def _bigrams(text: str) -> set[str]:

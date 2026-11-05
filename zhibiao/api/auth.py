@@ -51,7 +51,7 @@ async def login(
         await db.execute(
             select(Account).where(
                 or_(Account.username == payload.username, Account.email == payload.username)
-            )
+            ).limit(1)
         )
     ).scalar_one_or_none()
     if not account or not account.is_active or not password_matches(

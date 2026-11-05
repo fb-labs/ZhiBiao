@@ -64,6 +64,7 @@ async def document_of(db: AsyncSession, tender_id: str) -> BidDocument | None:
             select(BidDocument)
             .where(BidDocument.tender_id == tender_id)
             .order_by(BidDocument.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 

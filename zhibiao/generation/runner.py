@@ -2,17 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from sqlalchemy import select
 
+from zhibiao.core.chapter_rules import (
+    container_chapter_numbers,
+    estimate_word_budgets,
+    section_numbers,
+    shape_chapters,
+)
+from zhibiao.corpus import tender_corpus
 from zhibiao.database import session_factory
 from zhibiao.domain import JobStatus, TenderStatus
+from zhibiao.generation import engine
 from zhibiao.generation.quality import run_quality
-from zhibiao.generation.writer import generate_body
 from zhibiao.llm import get_chat_client
-from zhibiao.models import Analysis, BidDocument, BidSection, Job, Tender
+from zhibiao.models import Analysis, BidDocument, BidSection, Job, Tender, TenderFile
 
 logger = logging.getLogger(__name__)
+
+# 兼容测试/外部注入的旧版单章生成钩子；生产默认走 generation.engine。
+generate_body = None
 
 
 def serialize_job(job: Job) -> dict:
@@ -174,6 +185,22 @@ class GenerationManager:
                 total = len(sections)
                 tender_row = tender
                 document_id = document.id
+                tender_text = await tender_corpus(db, tender, limit=160000)
+                pdf_bytes = None
+                source_file = (
+                    await db.execute(
+                        select(TenderFile)
+                        .where(TenderFile.tender_id == tender.id)
+                        .order_by(TenderFile.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if (
+                    source_file
+                    and source_file.filename.lower().endswith(".pdf")
+                    and Path(source_file.stored_path).is_file()
+                ):
+                    pdf_bytes = Path(source_file.stored_path).read_bytes()
 
             await self._update(
                 job_id,
@@ -181,72 +208,159 @@ class GenerationManager:
                 progress=0,
                 message=f"开始生成，共 {total} 节",
             )
-            client = await get_chat_client(assistant="writer")
-            done = 0
-            failed = 0
-            generated = 0
+            facts_ok, facts_reason = engine.check_facts(tender_row, analysis)
+            if not facts_ok:
+                logger.warning("招标事实不足，继续生成但正文只能使用占位：%s", facts_reason)
+                await self._update(job_id, message="招标事实不足，正文将保留待填占位")
 
+            client = await get_chat_client(assistant="writer")
+            context = engine.build_context(tender_row, analysis, tender_text, pdf_bytes)
+            chapters: list[dict] = []
+            targets: list[dict] = []
             for section in sections:
+                body = (section.body or "").strip()
+                chapter = {
+                    "id": section.id,
+                    "seq": section.position + 1,
+                    "level": 2 if section.parent_key else 1,
+                    "title": section.heading,
+                    "content": body,
+                    "status": "已生成" if body and section.status == "written" else "未生成",
+                    "target_words": section.target_words or 0,
+                    "writing_focus": "",
+                    "project_name": tender_row.title,
+                }
+                chapters.append(chapter)
+                if mode == "missing":
+                    wanted = not (body and section.status == "written")
+                elif mode == "retry":
+                    wanted = section.status == "failed" or not body
+                else:
+                    wanted = True
+                if wanted:
+                    targets.append(chapter)
+            if not targets:
+                await self._update(
+                    job_id, status=JobStatus.SUCCEEDED, progress=100, message="没有待生成章节"
+                )
+                return
+
+            shaped = shape_chapters(chapters)
+            shaped_by_id = {item["id"]: item for item in shaped}
+            shaped = await engine.plan_focus(
+                client, shaped, context["ledger"], stop_event=cancel
+            )
+            numbers = section_numbers(shaped)
+            containers = container_chapter_numbers(numbers.values())
+            budgets = estimate_word_budgets(shaped, 0)
+            await self._update(
+                job_id,
+                progress=4,
+                message=f"全书写作计划已生成，开始写作 {len(targets)} 节",
+            )
+
+            generated = 0
+            generated_ids: set[str] = set()
+            failed_ids: set[str] = set()
+            done = 0
+            sem = asyncio.Semaphore(2)
+            sections_by_id = {row.id: row for row in sections}
+
+            async def _one(chapter: dict) -> None:
+                nonlocal generated, done
                 if cancel.is_set():
-                    await self._update(job_id, status=JobStatus.CANCELED, message="已取消生成")
                     return
-                if mode == "missing" and (section.body or "").strip() and section.status == "written":
-                    done += 1
+                async with sem:
+                    if cancel.is_set():
+                        return
                     await self._update(
                         job_id,
-                        progress=int(done / max(1, total) * 100),
-                        message=f"跳过已完成章节：{section.heading}",
+                        message=f"正在生成：{chapter['title']}",
                     )
-                    continue
-                if mode == "retry" and section.status != "failed":
-                    done += 1
-                    continue
-
-                await self._update(
-                    job_id,
-                    progress=int(done / max(1, total) * 100),
-                    message=f"正在生成：{section.heading}",
-                )
-                text = ""
-                last_error = ""
-                for attempt in range(2):
                     try:
-                        text = await generate_body(client, tender_row, analysis, section, sections)
-                        if text.strip():
-                            break
-                        last_error = "模型未返回内容"
+                        if generate_body is not None:
+                            text = await generate_body(
+                                client,
+                                tender_row,
+                                analysis,
+                                sections_by_id.get(chapter["id"]),
+                                sections,
+                            )
+                            _source, error = "", ""
+                        else:
+                            text, _source, error = await engine.generate_chapter(
+                                client,
+                                shaped_by_id.get(chapter["id"], chapter),
+                                context=context,
+                                chapters=shaped,
+                                numbers=numbers,
+                                containers=containers,
+                                budgets=budgets,
+                                issues=[],
+                                stop_event=cancel,
+                            )
                     except Exception as exc:  # noqa: BLE001
-                        last_error = str(exc)
-                        logger.warning("章节生成失败（%s，第 %s 次）：%s", section.heading, attempt + 1, exc)
-                        if attempt == 0:
-                            await asyncio.sleep(3)
-                if not text.strip():
-                    failed += 1
+                        text, _, error = "", "", f"生成异常：{exc}"
+                    done += 1
+                    if error or not text.strip():
+                        failed_ids.add(chapter["id"])
+                        errors.append(
+                            {
+                                "sectionId": chapter["id"],
+                                "heading": chapter["title"],
+                                "error": error or "模型未返回正文",
+                            }
+                        )
+                        async with session_factory()() as db:
+                            row = await db.get(BidSection, chapter["id"])
+                            if row:
+                                row.status = "failed"
+                                await db.commit()
+                        await self._update(
+                            job_id,
+                            progress=int(done / max(1, len(targets)) * 92) + 4,
+                            message=f"未成功 {done}/{len(targets)} 节：{chapter['title']}",
+                        )
+                        return
                     async with session_factory()() as db:
-                        row = await db.get(BidSection, section.id)
-                        if row:
-                            row.status = "failed"
-                            await db.commit()
-                    errors.append({"sectionId": section.id, "heading": section.heading, "error": last_error})
-                else:
-                    async with session_factory()() as db:
-                        row = await db.get(BidSection, section.id)
-                        tender = await db.get(Tender, tender_row.id)
+                        row = await db.get(BidSection, chapter["id"])
+                        tender_row_db = await db.get(Tender, tender_row.id)
                         if row:
                             row.body = text
                             row.status = "written"
-                            generated += 1
-                        if tender and tender.status in {TenderStatus.OUTLINED, TenderStatus.DRAFTING}:
-                            tender.status = TenderStatus.DRAFTING
+                            row.target_words = int(budgets.get(chapter["id"], row.target_words) or row.target_words)
+                        if tender_row_db and tender_row_db.status in {
+                            TenderStatus.OUTLINED,
+                            TenderStatus.DRAFTING,
+                        }:
+                            tender_row_db.status = TenderStatus.DRAFTING
                         await db.commit()
-                    section.body = text
-                    section.status = "written"
-                done += 1
-                await self._update(
-                    job_id,
-                    progress=int(done / max(1, total) * 100),
-                    message=f"已完成 {done}/{total} 节：{section.heading}",
-                )
+                    chapter["content"] = text
+                    generated_ids.add(chapter["id"])
+                    failed_ids.discard(chapter["id"])
+                    generated += 1
+                    await self._update(
+                        job_id,
+                        progress=int(done / max(1, len(targets)) * 92) + 4,
+                        message=f"已完成 {done}/{len(targets)} 节：{chapter['title']}",
+                    )
+
+            for pass_no in range(1, 3):
+                if cancel.is_set():
+                    break
+                pending = [
+                    item for item in targets if item["id"] not in generated_ids
+                ]
+                if not pending:
+                    break
+                if pass_no > 1:
+                    await self._update(
+                        job_id, message=f"第 {pass_no} 轮补齐：{len(pending)} 节"
+                    )
+                before = generated
+                await asyncio.gather(*(_one(item) for item in pending), return_exceptions=True)
+                if generated == before:
+                    break
 
             async with session_factory()() as db:
                 rows = (
@@ -256,22 +370,37 @@ class GenerationManager:
                         .order_by(BidSection.position.asc())
                     )
                 ).scalars().all()
+            row_dicts = [
+                {
+                    "id": row.id,
+                    "seq": row.position + 1,
+                    "level": 2 if row.parent_key else 1,
+                    "title": row.heading,
+                    "content": row.body or "",
+                }
+                for row in rows
+                if (row.body or "").strip()
+            ]
+            finalized, final_issues = engine.finalize_document(row_dicts, tender_text)
             quality = run_quality(list(rows))
-            if quality["updates"]:
+            merged_updates = {**finalized, **quality["updates"]}
+            if merged_updates:
                 async with session_factory()() as db:
-                    for section_id, body in quality["updates"].items():
+                    for section_id, body in merged_updates.items():
                         row = await db.get(BidSection, section_id)
                         if row:
                             row.body = body
                     await db.commit()
 
+            failed = len(failed_ids)
+            final_errors = [item for item in errors if item.get("sectionId") in failed_ids]
             result = {
                 "generated": generated,
                 "failed": failed,
                 "skipped": max(0, total - generated - failed),
-                "errors": errors,
+                "errors": final_errors,
                 "quality": quality["stats"],
-                "issues": quality["issues"][:40],
+                "issues": (final_issues + quality["issues"])[:40],
             }
             await self._update(
                 job_id,

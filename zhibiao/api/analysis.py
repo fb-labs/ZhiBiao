@@ -125,6 +125,7 @@ async def current_analysis(db: AsyncSession, tender_id: str) -> Analysis | None:
             select(Analysis)
             .where(Analysis.tender_id == tender_id, Analysis.is_current.is_(True))
             .order_by(Analysis.created_at.desc())
+            .limit(1)
         )
     ).scalar_one_or_none()
 
