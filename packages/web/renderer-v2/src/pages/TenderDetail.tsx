@@ -36,13 +36,62 @@ const ROLE_LABEL: Record<string, string> = {
   attachment: '参考资料',
 };
 
-const IMAGE_MD_RE =
-  /!\[[^\]]*\]\(\/api\/images\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)/g;
+const SECTION_STATE: Record<string, string> = {
+  written: '已编写',
+  failed: '失败',
+  pending: '待编写',
+};
 
-function insertedImages(text: string): string[] {
-  const ids: string[] = [];
-  for (const match of text.matchAll(IMAGE_MD_RE)) ids.push(match[1]);
-  return ids;
+const CN_DIGITS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+function cnNumber(title: string): number | null {
+  const match = title.match(/^\s*([一二三四五六七八九十]{1,3})、/);
+  if (!match) return null;
+  const raw = match[1];
+  if (raw === '十') return 10;
+  if (raw.startsWith('十')) return 10 + (CN_DIGITS[raw[1]] || 0);
+  if (raw.includes('十')) {
+    const [head, tail] = raw.split('十');
+    return (CN_DIGITS[head] || 0) * 10 + (tail ? CN_DIGITS[tail] || 0 : 0);
+  }
+  return CN_DIGITS[raw] ?? null;
+}
+
+function sectionNumbers(sections: Section[]): Record<string, string> {
+  // 与后端 chapter_rules.section_numbers 同一口径：按层级与出现顺序计算 1 / 1.1 / 2 / 2.1；
+  // 招标原件自带「一、」「十二、」时以原标题序号为准。
+  const counters: number[] = [];
+  const numbers: Record<string, string> = {};
+  for (const row of sections) {
+    const depth = row.parentKey ? 2 : 1;
+    if (depth === 1) {
+      const named = cnNumber(row.heading);
+      if (named !== null) {
+        counters.length = 0;
+        counters.push(named);
+        numbers[row.id] = String(named);
+        continue;
+      }
+    }
+    if (counters.length < depth) {
+      for (let extra = counters.length; extra < depth; extra += 1) counters.push(1);
+    } else {
+      counters.length = depth;
+      counters[depth - 1] += 1;
+    }
+    numbers[row.id] = counters.join('.');
+  }
+  return numbers;
 }
 
 const SEVERITY_LABEL: Record<string, string> = {
@@ -76,6 +125,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<TenderFile | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [activeSectionId, setActiveSectionId] = useState('');
   const [generating, setGenerating] = useState('');
   const [saving, setSaving] = useState('');
   const [outlineInfo, setOutlineInfo] = useState<{ mode?: string; note?: string; targetWords?: number } | null>(null);
@@ -146,6 +196,16 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     setDrafts(next);
     setFixes({});
   }, [document]);
+
+  useEffect(() => {
+    if (!document) {
+      setActiveSectionId('');
+      return;
+    }
+    if (!document.sections.some((row) => row.id === activeSectionId)) {
+      setActiveSectionId(document.sections[0]?.id || '');
+    }
+  }, [document, activeSectionId]);
 
   useEffect(() => {
     if (!generationJob || !['queued', 'running'].includes(generationJob.status)) return;
@@ -249,6 +309,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
   const generateSection = async (row: Section) => {
     if (generating) return false;
     setGenerating(row.id);
+    setActiveSectionId(row.id);
     setError('');
     setDrafts((prev) => ({ ...prev, [row.id]: '' }));
     try {
@@ -356,7 +417,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     setSaving(row.id);
     setError('');
     try {
-      const body = drafts[row.id] ?? '';
+      const body = drafts[row.id] ?? row.body;
       const updated = await api.patchSection(id, row.id, { body });
       setDocument((prev) =>
         prev
@@ -454,11 +515,35 @@ export function TenderDetailPage({ account, onLogout }: Props) {
     () => (document ? document.sections.filter((row) => (drafts[row.id] ?? row.body).trim()).length : 0),
     [document, drafts],
   );
+  const totalWords = useMemo(
+    () =>
+      document
+        ? document.sections.reduce(
+            (sum, row) => sum + (drafts[row.id] ?? row.body).replace(/\s/g, '').length,
+            0,
+          )
+        : 0,
+    [document, drafts],
+  );
+  const numbers = useMemo(() => sectionNumbers(document?.sections || []), [document]);
+  const activeSection = document?.sections.find((row) => row.id === activeSectionId) || null;
+  const activeBody = activeSection ? drafts[activeSection.id] ?? activeSection.body : '';
+  const activeDirty = activeSection ? activeBody !== activeSection.body : false;
+  const activeWords = activeBody.replace(/\s/g, '').length;
   const canWrite = account.permissions.includes('document.write');
   const canReview = account.permissions.includes('review.run');
   const canDeliver = account.permissions.includes('delivery.run');
   const canAnalyze = account.permissions.includes('analysis.run');
   const batchRunning = ['queued', 'running'].includes(generationJob?.status || '');
+
+  const switchSection = (nextId: string) => {
+    if (!document || nextId === activeSectionId) return;
+    if (activeSection && activeDirty) {
+      if (!window.confirm('当前章节有未保存的修改，切换章节会丢弃这些修改。确定切换？')) return;
+      setDrafts((prev) => ({ ...prev, [activeSection.id]: activeSection.body }));
+    }
+    setActiveSectionId(nextId);
+  };
 
   return (
     <div className="shell">
@@ -735,7 +820,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                   <div className="panel-head">
                     <div>
                       <p className="eyebrow">{document.title}</p>
-                      <h2>标书编写 <small>{writtenCount}/{document.sections.length} 节已完成</small></h2>
+                      <h2>标书编写 <small>{writtenCount}/{document.sections.length} 节已完成 · 约 {totalWords} 字</small></h2>
                       {outlineInfo?.note && (
                         <p className="panel-lead">
                           {outlineInfo.note} · 目标篇幅约 {Math.round(targetWords / 10000)} 万字
@@ -835,93 +920,147 @@ export function TenderDetailPage({ account, onLogout }: Props) {
                     );
                   })()}
 
-                  <div className="section-list">
-                    {document.sections.map((row) => {
-                      const top = !row.parentKey;
-                      const active = generating === row.id;
-                      return (
-                        <article className={`section-card ${top ? 'top' : 'child'}`} key={row.id}>
-                          <header className="section-head">
-                            <div>
-                              <span className="section-index">{String(row.position + 1).padStart(2, '0')}</span>
-                              <strong>{row.heading}</strong>
-                              <small>计划 {row.targetWords} 字 · {row.status === 'written' ? '已编写' : '待编写'}</small>
+                  <div className="doc-workspace">
+                    <aside className="doc-outline">
+                      <div className="doc-outline-head">
+                        <div>
+                          <span>章节目录</span>
+                          <small>{document.sections.length} 节</small>
+                        </div>
+                        <span className="doc-outline-progress">{writtenCount}/{document.sections.length}</span>
+                      </div>
+                      <div className="doc-outline-list">
+                        {document.sections.map((row) => (
+                          <button
+                            type="button"
+                            key={row.id}
+                            className={`doc-outline-item ${row.parentKey ? 'child' : ''} ${row.id === activeSectionId ? 'active' : ''}`}
+                            onClick={() => switchSection(row.id)}
+                            title={row.heading}
+                          >
+                            <span className="doc-outline-num">{numbers[row.id] || row.position + 1}</span>
+                            <span className="doc-outline-title">{row.heading}</span>
+                            {row.status === 'pending' ? (
+                              <span className="doc-outline-dot pending" title="待编写" />
+                            ) : (
+                              <span className={`doc-outline-state ${row.status}`}>
+                                {SECTION_STATE[row.status] || row.status}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="doc-outline-foot">
+                        <button className="ghost-button" onClick={addSection} disabled={!canWrite || batchRunning}>
+                          + 新增章节
+                        </button>
+                      </div>
+                    </aside>
+
+                    <section className="doc-stage">
+                      {activeSection ? (
+                        <>
+                          <header className="doc-stage-head">
+                            <div className="doc-stage-head-main">
+                              <div className="doc-stage-title">
+                                <span className="doc-stage-number">
+                                  {numbers[activeSection.id] || activeSection.position + 1}
+                                </span>
+                                <strong>{activeSection.heading}</strong>
+                                <span className={`doc-state ${activeSection.status}`}>
+                                  {SECTION_STATE[activeSection.status] || activeSection.status}
+                                </span>
+                                {activeDirty && <span className="doc-state dirty">未保存</span>}
+                                {generating === activeSection.id && <span className="doc-state running">生成中</span>}
+                                <span className="doc-stage-count">
+                                  目标 {activeSection.targetWords} 字 · 当前 {activeWords} 字
+                                </span>
+                              </div>
+                              {activeSection.intent && (
+                                <p className="doc-stage-intent">写作要点：{activeSection.intent}</p>
+                              )}
                             </div>
-                            <div className="section-actions">
+                            <div className="doc-stage-tools">
                               <button
-                                className="ghost-button small order"
-                                onClick={() => moveSection(row, 'up')}
-                                disabled={!canWrite || batchRunning || row.position === 0}
-                                title="上移"
+                                className="ghost-button small"
+                                onClick={() => moveSection(activeSection, 'up')}
+                                disabled={!canWrite || batchRunning || activeSection.position === 0}
+                                title="上移章节"
+                                aria-label="上移章节"
                               >
                                 ↑
                               </button>
                               <button
-                                className="ghost-button small order"
-                                onClick={() => moveSection(row, 'down')}
+                                className="ghost-button small"
+                                onClick={() => moveSection(activeSection, 'down')}
                                 disabled={
                                   !canWrite ||
                                   batchRunning ||
-                                  row.position === document.sections.length - 1
+                                  activeSection.position === document.sections.length - 1
                                 }
-                                title="下移"
+                                title="下移章节"
+                                aria-label="下移章节"
                               >
                                 ↓
                               </button>
                               <button
                                 className="ghost-button"
-                                onClick={() => generateSection(row)}
+                                onClick={() => {
+                                  if (activeDirty && !window.confirm('当前章节有未保存的修改，重新生成会覆盖，继续？')) return;
+                                  generateSection(activeSection);
+                                }}
                                 disabled={!!generating || !canWrite || batchRunning}
                               >
-                                {active ? '生成中…' : (drafts[row.id] || row.body).trim() ? '重新生成' : 'AI 编写'}
+                                {generating === activeSection.id ? '生成中…' : '重新生成'}
                               </button>
                               <button
                                 className="primary-button small"
-                                onClick={() => saveSection(row)}
-                                disabled={saving === row.id || !canWrite}
+                                onClick={() => saveSection(activeSection)}
+                                disabled={
+                                  saving === activeSection.id ||
+                                  !canWrite ||
+                                  !activeDirty ||
+                                  generating === activeSection.id
+                                }
                               >
-                                {saving === row.id ? '保存中…' : '保存'}
+                                {saving === activeSection.id ? '保存中…' : '保存'}
                               </button>
                               <button
                                 className="ghost-button danger small"
-                                onClick={() => removeSection(row)}
-                                disabled={!canWrite || batchRunning}
+                                onClick={() => removeSection(activeSection)}
+                                disabled={!canWrite || batchRunning || generating === activeSection.id}
                               >
                                 删除
                               </button>
                             </div>
                           </header>
-                          {row.intent && <p className="section-intent">写作要点：{row.intent}</p>}
-                          <textarea
-                            className="section-editor"
-                            value={drafts[row.id] ?? ''}
-                            placeholder={active ? '正在生成正文…' : '点击“AI 编写”生成，或直接输入正文'}
-                            onChange={(event) => setDrafts((prev) => ({ ...prev, [row.id]: event.target.value }))}
-                            rows={top ? 8 : 5}
-                            readOnly={active}
-                          />
-                          {(() => {
-                            const images = insertedImages(drafts[row.id] ?? row.body);
-                            if (!images.length) return null;
-                            return (
-                              <div className="section-images">
-                                {images.map((imageId) => (
-                                  <figure key={imageId}>
-                                    <img src={`/api/images/${imageId}`} alt="标书插图" loading="lazy" />
-                                    <span>已生成插图</span>
-                                  </figure>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                        </article>
-                      );
-                    })}
-                  </div>
-                  <div className="section-add-row">
-                    <button className="ghost-button" onClick={addSection} disabled={!canWrite || batchRunning}>
-                      + 新增章节
-                    </button>
+                          <div className="doc-stage-body">
+                            <textarea
+                              className="doc-editor"
+                              value={activeBody}
+                              onChange={(event) =>
+                                setDrafts((prev) => ({ ...prev, [activeSection.id]: event.target.value }))
+                              }
+                              placeholder="输入本章正文，支持 Markdown：## 小标题、**加粗**、- 项目符号、| 表格 |、![](图片)"
+                              readOnly={generating === activeSection.id || !canWrite}
+                              spellCheck={false}
+                            />
+                            <div className="doc-edit-foot">
+                              <span>正文按 Markdown 保存，导出 Word 时会转为正式排版。</span>
+                              <span>
+                                {saving === activeSection.id
+                                  ? '保存中…'
+                                  : activeDirty
+                                    ? '有未保存的修改'
+                                    : `约 ${activeWords} 字`}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="doc-stage-empty">请选择左侧章节目录中的任意章节。</div>
+                      )}
+                    </section>
                   </div>
                 </>
               )}
