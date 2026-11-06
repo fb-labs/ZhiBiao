@@ -83,9 +83,20 @@ export function PipelineScene({ dense = false }: Props) {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const width = container.clientWidth || 800;
     const height = container.clientHeight || 360;
+    const fov = 42;
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 140);
-    const baseCamera = new THREE.Vector3(0, compact ? 1.2 : 1.8, compact ? 23 : 20);
+    const camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 140);
+    // 按场景实际占位反推镜头距离：站点与标签横跨约 21.5，纵向内容约 7.2。
+    // 旧实现固定 20，卡片里只占中间一条，红框区域显得很小。
+    const fitCameraZ = (aspect: number) => {
+      const halfTan = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+      return Math.max(
+        compact ? 21 : 12,
+        7.2 / (2 * halfTan),
+        21.5 / (2 * halfTan * Math.max(0.8, aspect)),
+      );
+    };
+    const baseCamera = new THREE.Vector3(0, compact ? 1.2 : 1.4, fitCameraZ(width / height));
     camera.position.copy(baseCamera);
     camera.lookAt(0, 0.6, 0);
 
@@ -97,7 +108,7 @@ export function PipelineScene({ dense = false }: Props) {
     container.appendChild(renderer.domElement);
 
     const group = new THREE.Group();
-    group.position.set(compact ? 0 : dense ? 2.4 : 0.4, 0.1, 0);
+    group.position.set(compact ? 0 : dense ? 2.4 : 0, -0.25, 0);
     group.scale.setScalar(compact ? 0.74 : dense ? 0.92 : 1.2);
     scene.add(group);
 
@@ -630,6 +641,8 @@ export function PipelineScene({ dense = false }: Props) {
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, compact ? 1.5 : 2));
       renderer.setSize(nextWidth, nextHeight, false);
       camera.aspect = nextWidth / nextHeight;
+      baseCamera.z = fitCameraZ(camera.aspect);
+      camera.position.z = baseCamera.z;
       camera.updateProjectionMatrix();
       if (reduced) applyStatic();
     };

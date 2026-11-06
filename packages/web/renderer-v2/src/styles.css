@@ -3409,8 +3409,8 @@ body {
 }
 
 .hero {
-  grid-template-columns: minmax(0, 1.02fr) minmax(380px, 0.98fr);
-  gap: 48px;
+  grid-template-columns: minmax(0, 0.96fr) minmax(420px, 1.04fr);
+  gap: 44px;
   min-height: 460px;
   padding: 46px 52px;
 }
@@ -3426,7 +3426,7 @@ body {
 
 .hero-visual {
   position: relative;
-  height: 248px;
+  height: 292px;
   overflow: hidden;
   border: 1px solid rgba(99, 102, 241, 0.14);
   border-radius: 18px;
@@ -4730,7 +4730,7 @@ body {
   }
 
   .hero-visual {
-    height: 210px;
+    height: 250px;
     border-radius: 15px;
   }
 
