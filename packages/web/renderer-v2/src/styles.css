@@ -3426,7 +3426,7 @@ body {
 
 .hero-visual {
   position: relative;
-  height: 292px;
+  height: 276px;
   overflow: hidden;
   border: 1px solid rgba(99, 102, 241, 0.14);
   border-radius: 18px;
@@ -4730,7 +4730,7 @@ body {
   }
 
   .hero-visual {
-    height: 250px;
+    height: 236px;
     border-radius: 15px;
   }
 
