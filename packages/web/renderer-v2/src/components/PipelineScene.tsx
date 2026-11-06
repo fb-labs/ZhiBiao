@@ -414,6 +414,9 @@ export function PipelineScene({ dense = false }: Props) {
     }
 
     const pointer = { x: 0, y: 0, active: false };
+    // canvas 自身 pointer-events: none，事件要挂在有交互的父层（hero-visual），
+    // 否则悬浮高亮、光标光点和点击涟漪永远不会触发。
+    const surface = container.parentElement || container;
     const cursorTarget = new THREE.Vector3(0, 0, 1.5);
     const raycaster = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
@@ -422,7 +425,7 @@ export function PipelineScene({ dense = false }: Props) {
     let hovered = '';
 
     const updatePointer = (event: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
+      const rect = surface.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const px = (event.clientX - rect.left) / rect.width;
       const py = (event.clientY - rect.top) / rect.height;
@@ -444,7 +447,7 @@ export function PipelineScene({ dense = false }: Props) {
         }
       }
       hovered = found;
-      container.style.cursor = hovered ? 'pointer' : 'crosshair';
+      surface.style.cursor = hovered ? 'pointer' : 'crosshair';
     };
 
     const onPointerLeave = () => {
@@ -454,7 +457,7 @@ export function PipelineScene({ dense = false }: Props) {
       trail.forEach((dot) => {
         dot.visible = false;
       });
-      container.style.cursor = 'default';
+      surface.style.cursor = 'default';
     };
 
     type Ripple = { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial; life: number };
@@ -462,7 +465,7 @@ export function PipelineScene({ dense = false }: Props) {
 
     const onPointerDown = (event: PointerEvent) => {
       if (reduced) return;
-      const rect = container.getBoundingClientRect();
+      const rect = surface.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       const px = (event.clientX - rect.left) / rect.width;
       const py = (event.clientY - rect.top) / rect.height;
@@ -481,9 +484,9 @@ export function PipelineScene({ dense = false }: Props) {
       ripples.push({ mesh, material, life: 0 });
     };
 
-    container.addEventListener('pointermove', updatePointer);
-    container.addEventListener('pointerleave', onPointerLeave);
-    container.addEventListener('pointerdown', onPointerDown);
+    surface.addEventListener('pointermove', updatePointer);
+    surface.addEventListener('pointerleave', onPointerLeave);
+    surface.addEventListener('pointerdown', onPointerDown);
 
     let visible = true;
     const observer = new IntersectionObserver(
@@ -638,9 +641,10 @@ export function PipelineScene({ dense = false }: Props) {
       window.cancelAnimationFrame(frame);
       resizeObserver.disconnect();
       observer.disconnect();
-      container.removeEventListener('pointermove', updatePointer);
-      container.removeEventListener('pointerleave', onPointerLeave);
-      container.removeEventListener('pointerdown', onPointerDown);
+      surface.removeEventListener('pointermove', updatePointer);
+      surface.removeEventListener('pointerleave', onPointerLeave);
+      surface.removeEventListener('pointerdown', onPointerDown);
+      surface.style.cursor = 'default';
       ripples.forEach(({ mesh, material }) => {
         mesh.geometry.dispose();
         material.dispose();

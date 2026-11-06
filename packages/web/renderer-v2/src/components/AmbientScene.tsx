@@ -227,9 +227,10 @@ function buildModelScene(container: HTMLDivElement): () => void {
       ripples.push({ mesh, material, life: 0 });
     };
 
-    container.addEventListener('pointermove', onMove);
-    container.addEventListener('pointerleave', onLeave);
-    container.addEventListener('pointerdown', onDown);
+    // 背景层本身 pointer-events: none，指针事件挂到 window / document 才能跟着鼠标走。
+    window.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerleave', onLeave);
+    window.addEventListener('pointerdown', onDown);
 
     let visible = true;
     const observer = new IntersectionObserver(
@@ -323,9 +324,9 @@ function buildModelScene(container: HTMLDivElement): () => void {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       resizeObserver.disconnect();
-      container.removeEventListener('pointermove', onMove);
-      container.removeEventListener('pointerleave', onLeave);
-      container.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('pointerdown', onDown);
       ripples.forEach(({ mesh, material }) => {
         mesh.geometry.dispose();
         material.dispose();
@@ -453,9 +454,10 @@ function buildAccessScene(container: HTMLDivElement): () => void {
       ripples.push({ mesh, material, life: 0 });
     };
 
-    container.addEventListener('pointermove', onMove);
-    container.addEventListener('pointerleave', onLeave);
-    container.addEventListener('pointerdown', onDown);
+    // 背景层本身 pointer-events: none，指针事件挂到 window / document 才能跟着鼠标走。
+    window.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerleave', onLeave);
+    window.addEventListener('pointerdown', onDown);
 
     let visible = true;
     const observer = new IntersectionObserver(
@@ -536,9 +538,9 @@ function buildAccessScene(container: HTMLDivElement): () => void {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       resizeObserver.disconnect();
-      container.removeEventListener('pointermove', onMove);
-      container.removeEventListener('pointerleave', onLeave);
-      container.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('pointerdown', onDown);
       ripples.forEach(({ mesh, material }) => {
         mesh.geometry.dispose();
         material.dispose();
@@ -560,8 +562,18 @@ export function AmbientScene({ variant }: { variant: 'model' | 'access' }) {
 
 /* ───────────────────────── 项目详情：标书工作面 ───────────────────────── */
 
-export function WorkspaceScene({ step }: { step: string }) {
+export function WorkspaceScene({ step, progress = 0 }: { step: string; progress?: number }) {
   const host = useRef<HTMLDivElement | null>(null);
+  const stepRef = useRef(step);
+  const progressRef = useRef(progress);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   useEffect(() => {
     const container = host.current;
@@ -569,18 +581,38 @@ export function WorkspaceScene({ step }: { step: string }) {
     const stage = makeStage(container, 40);
     const { scene, camera, renderer, compact } = stage;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const accent = STEP_ACCENT[step] || PALETTE.indigo;
+    // 场景覆盖整块 hero，但 canvas 本身 pointer-events: none；把指针监听挂在父层，
+    // 鼠标经过标题/空白处都能带动纸张，而不是只有压在 canvas 上的那一下。
+    const surface = container.parentElement || container;
 
+    const baseX = compact ? 0 : 2.6;
+    const baseScale = compact ? 1.05 : 1.35;
     const group = new THREE.Group();
-    group.position.set(compact ? 0 : 2.6, 0, 0);
-    group.scale.setScalar(compact ? 0.95 : 1.2);
+    group.position.set(baseX, 0, 0);
+    group.scale.setScalar(baseScale);
     scene.add(group);
 
-    // 纸张
+    const accent = new THREE.Color(STEP_ACCENT[stepRef.current] || PALETTE.indigo);
+    const targetAccent = accent.clone();
+
+    // 纸张：后面两张错位的衬纸，让「一叠标书」有厚度，而不是一块平面。
     const sheetGeo = new THREE.PlaneGeometry(6.2, 3.5);
-    const sheet = new THREE.Mesh(sheetGeo, fillMaterial(PALETTE.paper, 0.34));
+    const backSheetA = new THREE.Mesh(sheetGeo, fillMaterial(PALETTE.paper, 0.16));
+    backSheetA.position.set(-0.16, 0.1, -0.08);
+    backSheetA.rotation.z = 0.012;
+    group.add(backSheetA);
+    const backSheetB = new THREE.Mesh(sheetGeo, fillMaterial(PALETTE.paper, 0.1));
+    backSheetB.position.set(-0.3, 0.2, -0.16);
+    backSheetB.rotation.z = 0.024;
+    group.add(backSheetB);
+
+    const sheet = new THREE.Mesh(sheetGeo, fillMaterial(PALETTE.paper, 0.4));
     group.add(sheet);
-    group.add(new THREE.LineSegments(new THREE.EdgesGeometry(sheetGeo), lineMaterial(accent, 0.5)));
+    const sheetEdge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(sheetGeo),
+      lineMaterial(accent.getHex(), 0.58),
+    );
+    group.add(sheetEdge);
 
     // 章节块：两列
     const blocks: { mesh: THREE.Mesh; edge: THREE.LineSegments; index: number }[] = [];
@@ -588,8 +620,11 @@ export function WorkspaceScene({ step }: { step: string }) {
     for (let index = 0; index < 12; index += 1) {
       const row = Math.floor(index / 2);
       const col = index % 2;
-      const mesh = new THREE.Mesh(blockGeo, fillMaterial(accent, 0.12));
-      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(blockGeo), lineMaterial(accent, 0.32));
+      const mesh = new THREE.Mesh(blockGeo, fillMaterial(accent.getHex(), 0.12));
+      const edge = new THREE.LineSegments(
+        new THREE.EdgesGeometry(blockGeo),
+        lineMaterial(accent.getHex(), 0.32),
+      );
       const x = (col - 0.5) * 2.15;
       const y = 1.28 - row * 0.5;
       mesh.position.set(x, y, 0.02);
@@ -599,44 +634,52 @@ export function WorkspaceScene({ step }: { step: string }) {
       blocks.push({ mesh, edge, index });
     }
 
-    // 步骤专属动效
+    // 步骤专属动效（一直在场，按当前步骤淡入淡出，不再整场景重建）
     const radar = new THREE.Group();
     radar.position.set(0, 0, 0.12);
-    const radarRing = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.03, 8, 100), lineMaterial(PALETTE.cyan, 0.5));
+    const radarRingMaterial = lineMaterial(PALETTE.cyan, 0.5);
+    const radarRing = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.03, 8, 100), radarRingMaterial);
     radar.add(radarRing);
-    const radarRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.02, 8, 80), lineMaterial(PALETTE.violet, 0.42));
+    const radarRing2Material = lineMaterial(PALETTE.violet, 0.42);
+    const radarRing2 = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.02, 8, 80), radarRing2Material);
     radar.add(radarRing2);
-    const sweep = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.02), glowMaterial(PALETTE.cyan, 0.5));
+    const sweepMaterial = glowMaterial(PALETTE.cyan, 0.5);
+    const sweep = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.02), sweepMaterial);
     sweep.position.set(0.75, 0, 0);
     const sweepPivot = new THREE.Group();
     sweepPivot.add(sweep);
     radar.add(sweepPivot);
-    radar.visible = step === 'analysis';
+    radar.visible = false;
     group.add(radar);
 
-    const scanBar = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 0.06), glowMaterial(accent, 0.36));
+    const scanMaterial = glowMaterial(accent.getHex(), 0.36);
+    const scanBar = new THREE.Mesh(new THREE.PlaneGeometry(6.0, 0.06), scanMaterial);
     scanBar.position.set(0, 1.7, 0.1);
-    scanBar.visible = step === 'review';
+    scanBar.visible = false;
     group.add(scanBar);
 
     const seal = new THREE.Group();
     seal.position.set(2.3, -1.2, 0.12);
-    const sealRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.024, 8, 60), lineMaterial(PALETTE.teal, 0.7));
+    const sealRingMaterial = lineMaterial(PALETTE.teal, 0.7);
+    const sealRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.024, 8, 60), sealRingMaterial);
     seal.add(sealRing);
-    const sealGlow = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.018, 8, 72), glowMaterial(PALETTE.teal, 0.2));
+    const sealGlowMaterial = glowMaterial(PALETTE.teal, 0.2);
+    const sealGlow = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.018, 8, 72), sealGlowMaterial);
     seal.add(sealGlow);
+    const checkMaterial = lineMaterial(PALETTE.teal, 0.9);
     const check = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-0.14, 0.02, 0.04),
       new THREE.Vector3(0.02, -0.16, 0.04),
       new THREE.Vector3(0.24, 0.16, 0.04),
     ]);
-    seal.add(new THREE.Line(check, lineMaterial(PALETTE.teal, 0.9)));
-    seal.visible = step === 'delivery';
+    seal.add(new THREE.Line(check, checkMaterial));
+    seal.visible = false;
     group.add(seal);
 
-    const progressBar = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.06), glowMaterial(PALETTE.violet, 0.4));
+    const progressMaterial = glowMaterial(PALETTE.violet, 0.4);
+    const progressBar = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 0.06), progressMaterial);
     progressBar.position.set(0, -1.62, 0.06);
-    progressBar.visible = step === 'writing';
+    progressBar.visible = false;
     group.add(progressBar);
 
     // 浮动粒子
@@ -649,21 +692,31 @@ export function WorkspaceScene({ step }: { step: string }) {
     }
     const dustGeo = new THREE.BufferGeometry();
     dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
-    scene.add(
-      new THREE.Points(
-        dustGeo,
-        new THREE.PointsMaterial({ size: 0.05, color: accent, transparent: true, opacity: 0.2, depthWrite: false }),
-      ),
-    );
+    const dustMaterial = new THREE.PointsMaterial({
+      size: 0.05,
+      color: accent.getHex(),
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+    });
+    scene.add(new THREE.Points(dustGeo, dustMaterial));
 
     const pointer = { x: 0, y: 0 };
     const onMove = (event: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
+      const rect = surface.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       pointer.x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
       pointer.y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
     };
-    container.addEventListener('pointermove', onMove);
+    surface.addEventListener('pointermove', onMove);
+
+    // 页面滚动时纸张轻微上浮、镜头后退，滚动本身也是场景的一部分。
+    let drift = 0;
+    const onScroll = () => {
+      drift = Math.min(1, Math.max(0, window.scrollY / 720));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
 
     let visible = true;
     const observer = new IntersectionObserver(
@@ -688,78 +741,134 @@ export function WorkspaceScene({ step }: { step: string }) {
     const clock = new THREE.Clock();
     let frame = 0;
     let running = true;
+    let lastStep = stepRef.current;
+    let stepPulse = 0;
+    let reveal = 0;
+    let radarMix = 0;
+    let scanMix = 0;
+    let sealMix = 0;
+    let progressMix = 0;
+
+    const paint = (time: number, instant: boolean) => {
+      const currentStep = stepRef.current;
+      if (currentStep !== lastStep) {
+        lastStep = currentStep;
+        targetAccent.setHex(STEP_ACCENT[currentStep] || PALETTE.indigo);
+        stepPulse = 1;
+      }
+      const ease = instant ? 1 : 0.09;
+      const target = (name: string) => (currentStep === name ? 1 : 0);
+      radarMix += (target('analysis') - radarMix) * ease;
+      scanMix += (target('review') - scanMix) * ease;
+      sealMix += (target('delivery') - sealMix) * ease;
+      progressMix += (target('writing') - progressMix) * ease;
+      reveal = instant ? 1 : reveal + (1 - reveal) * 0.06;
+      stepPulse = instant ? 0 : stepPulse * 0.92;
+      if (instant) accent.copy(targetAccent);
+      else accent.lerp(targetAccent, 0.08);
+
+      const filled = Math.min(12, Math.max(0, Math.round(progressRef.current * 12)));
+
+      camera.position.x += (pointer.x * 1.6 + 0.4 - camera.position.x) * 0.05;
+      camera.position.y += (-pointer.y * 1.1 + 0.2 + drift * 0.9 - camera.position.y) * 0.05;
+      camera.position.z = 12.5;
+      camera.lookAt(0, 0, 0);
+
+      group.position.set(baseX + pointer.x * 0.25, -drift * 0.35, 0);
+      group.rotation.y = -0.16 + Math.sin(time * 0.25) * 0.06 + pointer.x * 0.12;
+      group.rotation.x = -0.04 - pointer.y * 0.06 - drift * 0.05;
+      group.scale.setScalar(baseScale * (0.94 + reveal * 0.06) * (1 + stepPulse * 0.035));
+
+      const sheetMaterial = sheetEdge.material as THREE.LineBasicMaterial;
+      sheetMaterial.color.copy(accent);
+      sheetMaterial.opacity = 0.5 + stepPulse * 0.3;
+
+      blocks.forEach(({ mesh, edge, index }) => {
+        const material = mesh.material as THREE.MeshBasicMaterial;
+        const edgeMaterial = edge.material as THREE.LineBasicMaterial;
+        material.color.copy(accent);
+        edgeMaterial.color.copy(accent);
+        const on = index < filled;
+        if (currentStep === 'writing') {
+          const wave = (Math.sin(time * 1.1 - index * 0.4) + 1) / 2;
+          const strength = on ? 1 : wave * 0.45;
+          material.opacity = 0.08 + strength * 0.32;
+          edgeMaterial.opacity = 0.22 + strength * 0.3;
+        } else if (currentStep === 'review') {
+          const near = Math.max(0, 1 - Math.abs(mesh.position.y - scanBar.position.y) / 0.55);
+          material.opacity = 0.08 + near * 0.34;
+          edgeMaterial.opacity = 0.24 + near * 0.4;
+        } else if (currentStep === 'delivery') {
+          material.opacity = 0.3;
+          edgeMaterial.opacity = 0.5;
+        } else {
+          const wave = (Math.sin(time * 1.2 + index * 0.5) + 1) / 2;
+          material.opacity = on ? 0.24 : 0.1 + wave * 0.12;
+          edgeMaterial.opacity = on ? 0.48 : 0.34;
+        }
+      });
+
+      radar.visible = radarMix > 0.02;
+      radar.scale.setScalar(0.86 + radarMix * 0.14);
+      radarRingMaterial.opacity = 0.5 * radarMix;
+      radarRing2Material.opacity = 0.42 * radarMix;
+      sweepMaterial.opacity = 0.5 * radarMix;
+      if (radarMix > 0.02) {
+        sweepPivot.rotation.z = -time * 1.5;
+        radarRing.rotation.z = time * 0.2;
+        radarRing2.rotation.z = -time * 0.3;
+      }
+
+      scanBar.visible = scanMix > 0.02;
+      scanMaterial.opacity = 0.36 * scanMix;
+      if (scanMix > 0.02) scanBar.position.y = 1.6 - ((time * 0.5) % 1) * 3.2;
+
+      seal.visible = sealMix > 0.02;
+      sealRingMaterial.opacity = 0.7 * sealMix;
+      sealGlowMaterial.opacity = (0.14 + (Math.sin(time * 1.6) + 1) * 0.1) * sealMix;
+      checkMaterial.opacity = 0.9 * sealMix;
+      if (sealMix > 0.02) {
+        seal.scale.setScalar(1 + Math.sin(time * 1.6) * 0.06);
+        sealRing.rotation.z = time * 0.25;
+      }
+
+      progressBar.visible = progressMix > 0.02;
+      progressMaterial.opacity = 0.4 * progressMix;
+      const realProgress = Math.max(0.02, Math.min(1, progressRef.current));
+      progressBar.scale.x = realProgress * (1 + Math.sin(time * 2) * 0.02);
+      progressBar.position.x = -2.3 + (progressBar.scale.x * 4.6) / 2;
+
+      dustMaterial.color.copy(accent);
+    };
 
     const render = () => {
       if (!running) return;
-      if (visible && !document.hidden && !reduced) {
+      if (visible && !document.hidden) {
         clock.getDelta();
-        const time = clock.elapsedTime;
-
-        camera.position.x += (pointer.x * 1.6 + 0.4 - camera.position.x) * 0.05;
-        camera.position.y += (-pointer.y * 1.1 + 0.2 - camera.position.y) * 0.05;
-        camera.position.z = 12.5;
-        camera.lookAt(0, 0, 0);
-
-        group.rotation.y = -0.16 + Math.sin(time * 0.25) * 0.06 + pointer.x * 0.12;
-        group.rotation.x = -0.04 - pointer.y * 0.06;
-
-        blocks.forEach(({ mesh, edge, index }) => {
-          const material = mesh.material as THREE.MeshBasicMaterial;
-          const edgeMaterial = edge.material as THREE.LineBasicMaterial;
-          if (step === 'writing') {
-            const wave = (Math.sin(time * 1.1 - index * 0.4) + 1) / 2;
-            const filled = index < 8 ? 1 : wave;
-            material.opacity = 0.08 + filled * 0.32;
-            edgeMaterial.opacity = 0.22 + filled * 0.3;
-          } else if (step === 'review') {
-            const near = Math.max(0, 1 - Math.abs(mesh.position.y - scanBar.position.y) / 0.55);
-            material.opacity = 0.08 + near * 0.34;
-            edgeMaterial.opacity = 0.24 + near * 0.4;
-          } else if (step === 'delivery') {
-            material.opacity = 0.3;
-            edgeMaterial.opacity = 0.5;
-          } else {
-            material.opacity = 0.1 + ((Math.sin(time * 1.2 + index * 0.5) + 1) / 2) * 0.14;
-            edgeMaterial.opacity = 0.3;
-          }
-        });
-
-        if (step === 'analysis') {
-          sweepPivot.rotation.z = -time * 1.5;
-          radarRing.rotation.z = time * 0.2;
-          radarRing2.rotation.z = -time * 0.3;
-        }
-        if (step === 'review') {
-          scanBar.position.y = 1.6 - ((time * 0.5) % 1) * 3.2;
-        }
-        if (step === 'writing') {
-          const progress = (Math.sin(time * 0.6) + 1) / 2;
-          progressBar.scale.x = 0.2 + progress * 0.8;
-          progressBar.position.x = -2.3 + (progressBar.scale.x * 4.6) / 2;
-        }
-        if (step === 'delivery') {
-          seal.scale.setScalar(1 + Math.sin(time * 1.6) * 0.06);
-          sealRing.rotation.z = time * 0.25;
-          (sealGlow.material as THREE.MeshBasicMaterial).opacity = 0.14 + (Math.sin(time * 1.6) + 1) * 0.1;
-        }
-        (dustGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = false;
+        paint(clock.elapsedTime, false);
       }
       renderer.render(scene, camera);
       frame = window.requestAnimationFrame(render);
     };
 
-    renderer.render(scene, camera);
-    if (!reduced) render();
+    if (reduced) {
+      clock.getDelta();
+      paint(0, true);
+      renderer.render(scene, camera);
+    } else {
+      render();
+    }
 
     return () => {
       running = false;
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       resizeObserver.disconnect();
-      container.removeEventListener('pointermove', onMove);
+      surface.removeEventListener('pointermove', onMove);
+      window.removeEventListener('scroll', onScroll);
       disposeStage(stage);
     };
-  }, [step]);
+  }, []);
 
   return <div className="pipeline-scene workspace-scene" ref={host} aria-hidden="true" />;
 }

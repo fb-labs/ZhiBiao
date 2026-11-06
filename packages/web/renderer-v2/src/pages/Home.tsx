@@ -145,17 +145,7 @@ export function HomePage({ account, onLogout }: Props) {
           </div>
           <div className="hero-side">
             <div className="hero-visual">
-              <span className="visual-tag">BID PIPELINE · 投标流水线</span>
               <PipelineScene />
-            </div>
-            <div className="scene-caption" aria-hidden="true">
-              <span>招标文件</span>
-              <i />
-              <span>解读评分</span>
-              <i />
-              <span>标书章节</span>
-              <i />
-              <span>交付文件</span>
             </div>
             <div className="hero-stats">
               <div className="stat-card tone-indigo">

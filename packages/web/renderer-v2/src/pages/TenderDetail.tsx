@@ -596,7 +596,10 @@ export function TenderDetailPage({ account, onLogout }: Props) {
 
       <main className="workspace">
         <section className="tender-hero">
-          <WorkspaceScene step={tab} />
+          <WorkspaceScene
+            step={tab}
+            progress={document ? writtenCount / Math.max(1, document.sections.length) : 0}
+          />
           <div className="hero-copy">
             <p className="eyebrow">{tender?.code || 'TENDER'}</p>
             <h1>{tender?.title || '正在加载…'}</h1>
