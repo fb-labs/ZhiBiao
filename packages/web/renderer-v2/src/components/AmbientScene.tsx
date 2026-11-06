@@ -25,6 +25,16 @@ const STEP_ACCENT: Record<string, number> = {
   delivery: PALETTE.indigo,
 };
 
+// 每个步骤给纸张不同的视角，避免六个页签看到同一块平面。
+const STEP_TILT: Record<string, { x: number; y: number }> = {
+  overview: { x: -0.04, y: -0.16 },
+  files: { x: -0.1, y: 0.06 },
+  analysis: { x: -0.16, y: 0.13 },
+  writing: { x: -0.02, y: -0.05 },
+  review: { x: -0.12, y: 0.03 },
+  delivery: { x: 0.02, y: 0.16 },
+};
+
 type Stage = {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
@@ -634,6 +644,93 @@ export function WorkspaceScene({ step, progress = 0 }: { step: string; progress?
       blocks.push({ mesh, edge, index });
     }
 
+    // 解读：评分环 + 刻度 + 环绕节点
+    const scoreRing = new THREE.Group();
+    scoreRing.position.z = 0.14;
+    const scoreArcMaterial = glowMaterial(PALETTE.cyan, 0.5);
+    const scoreArc = new THREE.Mesh(
+      new THREE.TorusGeometry(2.25, 0.018, 8, 140, Math.PI * 1.45),
+      scoreArcMaterial,
+    );
+    scoreRing.add(scoreArc);
+    const scoreTicks: THREE.Mesh[] = [];
+    const scoreTickGeo = new THREE.PlaneGeometry(0.028, 0.16);
+    for (let index = 0; index < 24; index += 1) {
+      const angle = (index / 24) * Math.PI * 2;
+      const tick = new THREE.Mesh(scoreTickGeo, fillMaterial(PALETTE.cyan, 0.22));
+      tick.position.set(Math.cos(angle) * 2.36, Math.sin(angle) * 2.36, 0);
+      tick.rotation.z = angle;
+      scoreRing.add(tick);
+      scoreTicks.push(tick);
+    }
+    const scoreNodes: THREE.Mesh[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const node = new THREE.Mesh(
+        new THREE.SphereGeometry(0.045, 10, 10),
+        glowMaterial(index % 2 ? PALETTE.violet : PALETTE.cyan, 0.7),
+      );
+      scoreRing.add(node);
+      scoreNodes.push(node);
+    }
+    scoreRing.visible = false;
+    group.add(scoreRing);
+
+    // 检查：随扫描线逐点亮起的菱形标记
+    const reviewGroup = new THREE.Group();
+    const reviewMarks: { mesh: THREE.Mesh; base: number }[] = [];
+    const reviewPositions = [
+      [-1.55, 0.86], [0.2, 0.62], [1.55, 0.9], [0.95, -0.72], [-0.7, -0.9],
+    ];
+    const reviewMarkGeo = new THREE.PlaneGeometry(0.16, 0.16);
+    reviewPositions.forEach(([x, y], index) => {
+      const mark = new THREE.Mesh(
+        reviewMarkGeo,
+        fillMaterial(index === 3 ? 0xe11d48 : 0xf59e0b, 0.42),
+      );
+      mark.position.set(x, y, 0.1);
+      mark.rotation.z = Math.PI / 4;
+      reviewGroup.add(mark);
+      reviewMarks.push({ mesh: mark, base: 0.2 + index * 0.04 });
+    });
+    reviewGroup.visible = false;
+    group.add(reviewGroup);
+
+    // 编写：纸张外侧漂浮的章节卡片
+    const writingGroup = new THREE.Group();
+    const writingCards: { group: THREE.Group; baseY: number; baseRot: number; index: number }[] = [];
+    const cardMaterials: { material: { opacity: number }; base: number }[] = [];
+    const cardGeo = new THREE.PlaneGeometry(0.72, 0.46);
+    const cardEdges = new THREE.EdgesGeometry(cardGeo);
+    const cardSpecs = [
+      { x: -3.35, y: 0.9, rot: -0.32 },
+      { x: 3.4, y: 0.6, rot: 0.3 },
+      { x: 3.05, y: -1.1, rot: 0.2 },
+    ];
+    cardSpecs.forEach((spec, index) => {
+      const card = new THREE.Group();
+      card.position.set(spec.x, spec.y, 0.25);
+      card.rotation.y = spec.rot;
+      const panel = new THREE.Mesh(cardGeo, fillMaterial(PALETTE.paper, 0.4));
+      card.add(panel);
+      cardMaterials.push({ material: panel.material as { opacity: number }, base: 0.4 });
+      const edges = new THREE.LineSegments(cardEdges, lineMaterial(PALETTE.violet, 0.45));
+      card.add(edges);
+      cardMaterials.push({ material: edges.material as { opacity: number }, base: 0.45 });
+      for (let line = 0; line < 3; line += 1) {
+        const rule = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.5 - line * 0.1, 0.025),
+          fillMaterial(PALETTE.violet, 0.26),
+        );
+        rule.position.set(0, 0.1 - line * 0.1, 0.004);
+        card.add(rule);
+        cardMaterials.push({ material: rule.material as { opacity: number }, base: 0.26 });
+      }
+      writingGroup.add(card);
+      writingCards.push({ group: card, baseY: spec.y, baseRot: spec.rot, index });
+    });
+    writingGroup.visible = false;
+    group.add(writingGroup);
+
     // 步骤专属动效（一直在场，按当前步骤淡入淡出，不再整场景重建）
     const radar = new THREE.Group();
     radar.position.set(0, 0, 0.12);
@@ -748,6 +845,8 @@ export function WorkspaceScene({ step, progress = 0 }: { step: string; progress?
     let scanMix = 0;
     let sealMix = 0;
     let progressMix = 0;
+    let tiltX = STEP_TILT[stepRef.current]?.x ?? -0.04;
+    let tiltY = STEP_TILT[stepRef.current]?.y ?? -0.16;
 
     const paint = (time: number, instant: boolean) => {
       const currentStep = stepRef.current;
@@ -775,8 +874,11 @@ export function WorkspaceScene({ step, progress = 0 }: { step: string; progress?
       camera.lookAt(0, 0, 0);
 
       group.position.set(baseX + pointer.x * 0.25, -drift * 0.35, 0);
-      group.rotation.y = -0.16 + Math.sin(time * 0.25) * 0.06 + pointer.x * 0.12;
-      group.rotation.x = -0.04 - pointer.y * 0.06 - drift * 0.05;
+      const tilt = STEP_TILT[currentStep] || STEP_TILT.overview;
+      tiltX = instant ? tilt.x : tiltX + (tilt.x - tiltX) * 0.05;
+      tiltY = instant ? tilt.y : tiltY + (tilt.y - tiltY) * 0.05;
+      group.rotation.y = tiltY + Math.sin(time * 0.25) * 0.04 + pointer.x * 0.1;
+      group.rotation.x = tiltX - pointer.y * 0.05 - drift * 0.05;
       group.scale.setScalar(baseScale * (0.94 + reveal * 0.06) * (1 + stepPulse * 0.035));
 
       const sheetMaterial = sheetEdge.material as THREE.LineBasicMaterial;
@@ -823,12 +925,48 @@ export function WorkspaceScene({ step, progress = 0 }: { step: string; progress?
       scanMaterial.opacity = 0.36 * scanMix;
       if (scanMix > 0.02) scanBar.position.y = 1.6 - ((time * 0.5) % 1) * 3.2;
 
+      scoreRing.visible = radarMix > 0.02;
+      scoreArcMaterial.opacity = 0.5 * radarMix;
+      if (scoreRing.visible) {
+        scoreRing.rotation.z = time * 0.22;
+        scoreTicks.forEach((tick) => {
+          (tick.material as THREE.MeshBasicMaterial).opacity = 0.22 * radarMix;
+        });
+        scoreNodes.forEach((node, index) => {
+          const angle = time * 0.7 + (index / scoreNodes.length) * Math.PI * 2;
+          node.position.set(Math.cos(angle) * 2.3, Math.sin(angle) * 1.7, Math.sin(angle * 2) * 0.18);
+          (node.material as THREE.MeshBasicMaterial).opacity = 0.7 * radarMix;
+        });
+      }
+
+      reviewGroup.visible = scanMix > 0.02;
+      if (reviewGroup.visible) {
+        reviewMarks.forEach(({ mesh, base }, index) => {
+          const pulse = (Math.sin(time * 2.2 + index * 0.8) + 1) / 2;
+          (mesh.material as THREE.MeshBasicMaterial).opacity = (base + pulse * 0.35) * scanMix;
+          mesh.scale.setScalar(0.85 + pulse * 0.35);
+        });
+      }
+
+      writingGroup.visible = progressMix > 0.02;
+      if (writingGroup.visible) {
+        writingCards.forEach(({ group: card, baseY, baseRot, index }) => {
+          card.position.y = baseY + Math.sin(time * 0.9 + index * 1.1) * 0.07;
+          card.rotation.y = baseRot + Math.sin(time * 0.5 + index) * 0.05;
+        });
+        cardMaterials.forEach(({ material, base }) => {
+          material.opacity = base * progressMix;
+        });
+      }
+
+      const stamp = (Math.sin(time * 1.35) + 1) / 2;
       seal.visible = sealMix > 0.02;
-      sealRingMaterial.opacity = 0.7 * sealMix;
-      sealGlowMaterial.opacity = (0.14 + (Math.sin(time * 1.6) + 1) * 0.1) * sealMix;
-      checkMaterial.opacity = 0.9 * sealMix;
+      sealRingMaterial.opacity = (0.3 + stamp * 0.5) * sealMix;
+      sealGlowMaterial.opacity = (0.08 + stamp * 0.22) * sealMix;
+      checkMaterial.opacity = (0.4 + stamp * 0.55) * sealMix;
       if (sealMix > 0.02) {
-        seal.scale.setScalar(1 + Math.sin(time * 1.6) * 0.06);
+        seal.position.y = -1.2 + (1 - stamp) * 0.42;
+        seal.scale.setScalar(0.92 + stamp * 0.14);
         sealRing.rotation.z = time * 0.25;
       }
 

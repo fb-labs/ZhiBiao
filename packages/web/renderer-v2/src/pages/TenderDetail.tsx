@@ -594,7 +594,7 @@ export function TenderDetailPage({ account, onLogout }: Props) {
         </div>
       </header>
 
-      <main className="workspace">
+      <main className="workspace workspace-wide">
         <section className="tender-hero">
           <WorkspaceScene
             step={tab}

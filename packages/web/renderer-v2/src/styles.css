@@ -496,6 +496,11 @@ button {
   padding: 28px 0 80px;
 }
 
+/* 项目详情里的六个页签内容更宽，避免大屏两侧留出大片空白 */
+.workspace.workspace-wide {
+  width: min(1600px, calc(100% - 48px));
+}
+
 /* ---------- 工作台英雄区 ---------- */
 .hero,
 .tender-hero {
@@ -1512,6 +1517,10 @@ button {
   }
 
   .workspace {
+    width: calc(100% - 32px);
+  }
+
+  .workspace.workspace-wide {
     width: calc(100% - 32px);
   }
 
@@ -4706,6 +4715,10 @@ body {
   .workspace {
     width: calc(100% - 24px);
     padding: 16px 0 calc(48px + env(safe-area-inset-bottom));
+  }
+
+  .workspace.workspace-wide {
+    width: calc(100% - 24px);
   }
 
   .hero {
