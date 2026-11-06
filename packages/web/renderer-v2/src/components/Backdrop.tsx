@@ -116,20 +116,81 @@ export function Backdrop({ dense = false }: Props) {
         blending: THREE.AdditiveBlending,
       });
 
-    // ── 中央“投标智能核”：文件、评分与交付围绕它运转 ──
-    const core = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(compact ? 2.5 : 3.1, 1),
-      new THREE.MeshBasicMaterial({ color: colors.violet, wireframe: true, transparent: true, opacity: 0.52 }),
-    );
+    // ── 中央：一叠待交付的投标文件 ──
+    // 原来的嵌套线框球与标书没有任何关系；换成纸张叠层 + 封面目录行 + 印章，
+    // 让视线中心就是「一份标书」，轨道上的文件/解读/章节/交付围绕它运转。
+    const core = new THREE.Group();
+    core.rotation.x = -0.12;
+    core.scale.setScalar(compact ? 1 : 1.15);
     group.add(core);
 
-    const inner = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(compact ? 1.45 : 1.8, 1),
-      new THREE.MeshBasicMaterial({ color: colors.cyan, wireframe: true, transparent: true, opacity: 0.38 }),
-    );
-    group.add(inner);
+    const bookW = compact ? 2.5 : 3.1;
+    const bookH = compact ? 3.3 : 4.0;
+    const bookPageGeo = new THREE.PlaneGeometry(bookW, bookH);
+    const bookPageEdges = new THREE.EdgesGeometry(bookPageGeo);
+    const bookPageCount = compact ? 7 : 10;
+    const pageStep = compact ? 0.05 : 0.06;
+    for (let index = 0; index < bookPageCount; index += 1) {
+      const front = index === bookPageCount - 1;
+      const page = new THREE.Mesh(bookPageGeo, fillMaterial(colors.paper, front ? 0.62 : 0.2));
+      page.position.set(index * 0.012, -index * 0.008, -index * pageStep);
+      page.rotation.z = index * 0.005;
+      core.add(page);
+      const edges = new THREE.LineSegments(
+        bookPageEdges,
+        lineMaterial(colors.indigo, front ? 0.82 : 0.28),
+      );
+      edges.position.copy(page.position);
+      edges.rotation.copy(page.rotation);
+      core.add(edges);
+    }
+    const coverZ = -(bookPageCount - 1) * pageStep + 0.012;
 
-    const coreGlow = new THREE.Mesh(new THREE.SphereGeometry(compact ? 2.7 : 3.3, 24, 24), glowMaterial(colors.violet, 0.045));
+    const titleBar = new THREE.Mesh(
+      new THREE.PlaneGeometry(bookW * 0.62, 0.12),
+      fillMaterial(colors.indigo, 0.8),
+    );
+    titleBar.position.set(-bookW * 0.08, bookH * 0.3, coverZ);
+    core.add(titleBar);
+
+    [0.72, 0.6, 0.66, 0.5, 0.58].forEach((ratio, index) => {
+      const rule = new THREE.Mesh(
+        new THREE.PlaneGeometry(bookW * ratio, 0.035),
+        fillMaterial(colors.indigo, 0.45),
+      );
+      rule.position.set(-bookW * 0.1, bookH * 0.16 - index * 0.17, coverZ);
+      core.add(rule);
+    });
+
+    const ribbon = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.1, 0.52),
+      fillMaterial(colors.violet, 0.55),
+    );
+    ribbon.position.set(bookW * 0.34, bookH * 0.36, coverZ + 0.004);
+    ribbon.rotation.z = 0.18;
+    core.add(ribbon);
+
+    const coverSeal = new THREE.Mesh(
+      new THREE.TorusGeometry(compact ? 0.2 : 0.25, 0.016, 8, 48),
+      lineMaterial(colors.teal, 0.78),
+    );
+    coverSeal.position.set(bookW * 0.3, -bookH * 0.3, coverZ + 0.004);
+    core.add(coverSeal);
+    const coverCheck = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(bookW * 0.24, -bookH * 0.3, coverZ + 0.006),
+      new THREE.Vector3(bookW * 0.29, -bookH * 0.34, coverZ + 0.006),
+      new THREE.Vector3(bookW * 0.37, -bookH * 0.24, coverZ + 0.006),
+    ]);
+    core.add(new THREE.Line(coverCheck, lineMaterial(colors.teal, 0.8)));
+
+    const scanFrame = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(bookW + 1.0, bookH + 1.0, 0.9)),
+      lineMaterial(colors.cyan, 0.12),
+    );
+    scanFrame.position.z = -0.3;
+    core.add(scanFrame);
+
+    const coreGlow = new THREE.Mesh(new THREE.SphereGeometry(compact ? 2.6 : 3.2, 24, 24), glowMaterial(colors.violet, 0.04));
     group.add(coreGlow);
 
     const rings: THREE.Mesh[] = [];
@@ -426,10 +487,8 @@ export function Backdrop({ dense = false }: Props) {
         group.rotation.x += (-pointer.y * 0.1 - group.rotation.x) * 0.06;
         group.position.y = 0.2 + Math.sin(time * 0.55) * 0.08;
 
-        core.rotation.y = time * 0.32;
-        core.rotation.x = time * 0.16;
-        inner.rotation.y = -time * 0.42;
-        inner.rotation.z = time * 0.2;
+        core.rotation.y = Math.sin(time * 0.38) * 0.28;
+        core.rotation.x = -0.12 + Math.sin(time * 0.22) * 0.03;
         coreGlow.scale.setScalar(1 + Math.sin(time * 1.1) * 0.08);
         rings.forEach((ring, index) => {
           ring.rotation.z += delta * (0.03 + index * 0.012);
